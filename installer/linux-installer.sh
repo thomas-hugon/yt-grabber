@@ -4,6 +4,7 @@ set -euo pipefail
 DEST_BIN="$HOME/.local/bin/ytgrabber-server"
 YT_DLP_BIN="$HOME/.local/bin/yt-dlp"
 FFMPEG_BIN="$HOME/.local/bin/ffmpeg"
+LOG_FILE="$HOME/.local/bin/ytgrabber.log"
 TOKEN_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ytgrabber"
 TOKEN_FILE="$TOKEN_DIR/token"
 UNIT_DIR="$HOME/.config/systemd/user"
@@ -161,8 +162,9 @@ remove_installation() {
   remove_start_line_if_present "$BASHRC"
   remove_start_line_if_present "$PROFILE"
 
-  rm -f "$DEST_BIN" "$YT_DLP_BIN" "$FFMPEG_BIN" "$TOKEN_FILE"
+  rm -f "$DEST_BIN" "$YT_DLP_BIN" "$FFMPEG_BIN" "$LOG_FILE" "$TOKEN_FILE"
   rmdir "$TOKEN_DIR" >/dev/null 2>&1 || true
+  rmdir "$UNIT_DIR" >/dev/null 2>&1 || true
 
   echo "YT Grabber removed from this user account."
 }
