@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "smoke": "node smoke.mjs"
+    "smoke": "node smoke.mjs",
+    "repro:thumbnail-mismatch": "node thumbnail-mismatch-repro.mjs"
   },
   "dependencies": {
     "playwright": "1.52.0"

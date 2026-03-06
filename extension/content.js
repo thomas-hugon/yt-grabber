@@ -180,26 +180,26 @@ function injectLockupButtons(roots) {
 
   lockups.forEach(lockup => {
     const root = lockup.querySelector('.yt-lockup-view-model') || lockup
-    if (!root || root.querySelector('.ytg-lockup-btn')) return
+    if (!root) return
 
     const link = root.querySelector('a.yt-lockup-view-model__content-image[href], a.yt-lockup-metadata-view-model__title[href], a[href*="watch?v="]')
     const url = normalizeVideoURL(link?.getAttribute('href') || '')
-    if (!url) return
-
     const titleNode = root.querySelector('.yt-lockup-metadata-view-model__title, a.yt-lockup-metadata-view-model__title')
     const title = (titleNode?.textContent || '').trim() || 'YouTube Download'
 
-    const btn = document.createElement('button')
-    btn.type = 'button'
-    btn.className = 'ytg-lockup-btn'
-    btn.textContent = 'Télécharger'
-    btn.dataset.url = url
-    btn.dataset.title = title
-    btn.addEventListener('click', evt => {
-      evt.preventDefault()
-      evt.stopPropagation()
-      onTriggerClick(evt)
-    })
+    const existing = root.querySelector('.ytg-lockup-btn')
+    if (!url) {
+      if (existing) existing.remove()
+      return
+    }
+
+    if (existing) {
+      existing.dataset.url = url
+      existing.dataset.title = title
+      return
+    }
+
+    const btn = createLockupButton(url, title)
 
     const menuButton = root.querySelector('.yt-lockup-metadata-view-model__menu-button')
     if (menuButton?.parentElement) {
@@ -219,26 +219,24 @@ function injectLegacyCardButtons(roots) {
   let injected = 0
 
   cards.forEach(card => {
-    if (card.querySelector('.ytg-lockup-btn')) return
-
     const link = card.querySelector('a#thumbnail[href], a#video-title[href], a[href*="watch?v="]')
     const url = normalizeVideoURL(link?.getAttribute('href') || '')
-    if (!url) return
-
     const titleNode = card.querySelector('#video-title, a#video-title, #video-title-link')
     const title = (titleNode?.textContent || '').trim() || 'YouTube Download'
 
-    const btn = document.createElement('button')
-    btn.type = 'button'
-    btn.className = 'ytg-lockup-btn'
-    btn.textContent = 'Télécharger'
-    btn.dataset.url = url
-    btn.dataset.title = title
-    btn.addEventListener('click', evt => {
-      evt.preventDefault()
-      evt.stopPropagation()
-      onTriggerClick(evt)
-    })
+    const existing = card.querySelector('.ytg-lockup-btn')
+    if (!url) {
+      if (existing) existing.remove()
+      return
+    }
+
+    if (existing) {
+      existing.dataset.url = url
+      existing.dataset.title = title
+      return
+    }
+
+    const btn = createLockupButton(url, title)
 
     const menu = card.querySelector('#menu, #menu-container, ytd-menu-renderer')
     if (menu?.parentElement) {
@@ -257,6 +255,44 @@ function injectCardButtons(roots) {
   return injectLockupButtons(roots) + injectLegacyCardButtons(roots)
 }
 
+function createLockupButton(url, title) {
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.className = 'ytg-lockup-btn'
+  btn.textContent = 'Télécharger'
+  btn.dataset.url = url
+  btn.dataset.title = title
+  btn.addEventListener('click', evt => {
+    evt.preventDefault()
+    evt.stopPropagation()
+    onTriggerClick(evt)
+  })
+  return btn
+}
+
+function refreshCardButtonContext(btn) {
+  const lockup = btn.closest('yt-lockup-view-model')
+  if (lockup) {
+    const root = lockup.querySelector('.yt-lockup-view-model') || lockup
+    const link = root.querySelector('a.yt-lockup-view-model__content-image[href], a.yt-lockup-metadata-view-model__title[href], a[href*="watch?v="]')
+    const url = normalizeVideoURL(link?.getAttribute('href') || '')
+    const titleNode = root.querySelector('.yt-lockup-metadata-view-model__title, a.yt-lockup-metadata-view-model__title')
+    const title = (titleNode?.textContent || '').trim() || 'YouTube Download'
+    if (url) btn.dataset.url = url
+    btn.dataset.title = title
+    return
+  }
+
+  const card = btn.closest('ytd-compact-video-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-rich-grid-media')
+  if (!card) return
+  const link = card.querySelector('a#thumbnail[href], a#video-title[href], a[href*="watch?v="]')
+  const url = normalizeVideoURL(link?.getAttribute('href') || '')
+  const titleNode = card.querySelector('#video-title, a#video-title, #video-title-link')
+  const title = (titleNode?.textContent || '').trim() || 'YouTube Download'
+  if (url) btn.dataset.url = url
+  btn.dataset.title = title
+}
+
 function removeButton() {
   const wrap = document.getElementById('ytg-btn')
   if (wrap) wrap.remove()
@@ -271,6 +307,9 @@ function removeButton() {
 function onTriggerClick(evt) {
   const trigger = evt?.currentTarget
   if (trigger instanceof Element) {
+    if (trigger.classList.contains('ytg-lockup-btn')) {
+      refreshCardButtonContext(trigger)
+    }
     state.panelAnchorEl = trigger
   }
   const forcedURL = trigger?.dataset?.url || location.href
