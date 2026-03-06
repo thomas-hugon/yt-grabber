@@ -96,6 +96,26 @@
       display: block;
     }
 
+    .actions {
+      margin-top: 10px;
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    #retryBtn {
+      border: 1px solid #3b4257;
+      border-radius: 8px;
+      background: #1b2030;
+      color: var(--text);
+      font: 600 12px 'Segoe UI', system-ui, sans-serif;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+
+    #retryBtn:hover {
+      background: #22283a;
+    }
+
     @keyframes pulse {
       0% { box-shadow: 0 0 0 0 rgba(70, 212, 125, 0.5); }
       70% { box-shadow: 0 0 0 7px rgba(70, 212, 125, 0); }
@@ -114,30 +134,10 @@
   <div class="status" id="statusBox">
     <div class="row"><span class="dot" id="dot"></span><span id="label">Vérification du serveur...</span></div>
     <div class="hint" id="hint"></div>
+    <div class="actions">
+      <button id="retryBtn" type="button">Re-tester</button>
+    </div>
   </div>
-
-  <script>
-    const dot = document.getElementById('dot')
-    const label = document.getElementById('label')
-    const hint = document.getElementById('hint')
-
-    const setState = ok => {
-      if (ok) {
-        dot.classList.remove('err')
-        label.textContent = 'Serveur actif — localhost:9875'
-        hint.classList.remove('show')
-        return
-      }
-
-      dot.classList.add('err')
-      label.textContent = 'Serveur introuvable'
-      hint.textContent = 'Windows: lancez YTGrabber-Server.exe. Linux: systemctl --user start ytgrabber.'
-      hint.classList.add('show')
-    }
-
-    fetch('http://localhost:9875/ping', { signal: AbortSignal.timeout(3000) })
-      .then(r => setState(r.ok))
-      .catch(() => setState(false))
-  </script>
+  <script src="popup.js"></script>
 </body>
 </html>

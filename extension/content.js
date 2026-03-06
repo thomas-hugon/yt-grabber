@@ -6,7 +6,9 @@ const state = {
   source: null,
   outsideHandler: null,
   progressResetTimer: null,
-  downloadLock: false
+  downloadLock: false,
+  serverStatusTimer: null,
+  serverStatus: null
 }
 
 const selectors = [
@@ -112,6 +114,12 @@ function buildPanel() {
       <button class="ytg-close" type="button" aria-label="Fermer">×</button>
     </div>
 
+    <div id="ytg-server-state" class="ytg-server-state pending" role="status" aria-live="polite">
+      <span class="dot" id="ytg-server-dot" aria-hidden="true"></span>
+      <span id="ytg-server-label">Vérification du serveur local...</span>
+      <button id="ytg-server-retry" type="button">Re-tester</button>
+    </div>
+
     <div class="ytg-section">
       <div class="ytg-label">Format</div>
       <div class="ytg-segment" data-group="format"></div>
@@ -143,6 +151,9 @@ function buildPanel() {
 
   panel.querySelector('.ytg-close').addEventListener('click', removePanel)
   panel.querySelector('#ytg-download').addEventListener('click', onDownloadClick)
+  panel.querySelector('#ytg-server-retry').addEventListener('click', () => {
+    refreshServerStatusUI(true)
+  })
 
   setTimeout(() => {
     state.outsideHandler = evt => {
@@ -152,6 +163,9 @@ function buildPanel() {
     }
     document.addEventListener('click', state.outsideHandler)
   }, 100)
+
+  refreshServerStatusUI()
+  state.serverStatusTimer = setInterval(() => refreshServerStatusUI(), 15000)
 }
 
 function placePanel(trigger, panel) {
@@ -187,6 +201,64 @@ function mountSegment(root, options, activeValue, onChange) {
   })
 }
 
+async function pingServer() {
+  try {
+    const pong = await fetch('http://localhost:9875/ping', { signal: AbortSignal.timeout(3000) })
+    return pong.ok
+  } catch {
+    return false
+  }
+}
+
+function applyServerState(isUp) {
+  if (!state.panel) return
+
+  const stateRoot = state.panel.querySelector('#ytg-server-state')
+  const label = state.panel.querySelector('#ytg-server-label')
+  const warning = state.panel.querySelector('#ytg-server-warning')
+  const actionBtn = state.panel.querySelector('#ytg-download')
+  if (!stateRoot || !label || !warning || !actionBtn) return
+
+  stateRoot.classList.remove('pending', 'online', 'offline')
+
+  if (isUp) {
+    stateRoot.classList.add('online')
+    label.textContent = 'Serveur actif (localhost:9875)'
+    warning.hidden = true
+    actionBtn.disabled = false
+    state.serverStatus = true
+    return
+  }
+
+  stateRoot.classList.add('offline')
+  label.textContent = 'Serveur indisponible (localhost:9875)'
+  warning.hidden = false
+  actionBtn.disabled = true
+  state.serverStatus = false
+}
+
+async function refreshServerStatusUI(forceRefresh = false) {
+  if (!state.panel) return false
+  if (!forceRefresh && state.downloadLock) return state.serverStatus === true
+
+  const stateRoot = state.panel.querySelector('#ytg-server-state')
+  const label = state.panel.querySelector('#ytg-server-label')
+  if (stateRoot && label) {
+    stateRoot.classList.remove('online', 'offline')
+    stateRoot.classList.add('pending')
+    label.textContent = 'Vérification du serveur local...'
+  }
+
+  const isUp = await pingServer()
+  applyServerState(isUp)
+
+  chrome.runtime.sendMessage({ action: 'refreshHealth' }, () => {
+    void chrome.runtime.lastError
+  })
+
+  return isUp
+}
+
 async function onDownloadClick() {
   if (!state.panel || state.downloadLock) return
   state.downloadLock = true
@@ -206,14 +278,11 @@ async function onDownloadClick() {
   fill.style.width = '0%'
   fill.classList.remove('done', 'error')
 
-  try {
-    const pong = await fetch('http://localhost:9875/ping', { signal: AbortSignal.timeout(3000) })
-    if (!pong.ok) throw new Error('ping failed')
-  } catch (err) {
-    warning.hidden = false
+  const isUp = await refreshServerStatusUI(true)
+  if (!isUp) {
     status.textContent = 'Serveur indisponible'
     fill.classList.add('error')
-    actionBtn.disabled = false
+    actionBtn.disabled = true
     state.downloadLock = false
     return
   }
@@ -304,6 +373,7 @@ async function onDownloadClick() {
     fill.classList.add('error')
     state.downloadLock = false
     actionBtn.disabled = false
+    refreshServerStatusUI(true)
   }
 }
 
@@ -315,8 +385,13 @@ function resetPanel() {
   state.panel.querySelector('#ytg-meta').textContent = ''
   fill.style.width = '0%'
   fill.classList.remove('done', 'error')
-  actionBtn.disabled = false
   state.panel.querySelector('#ytg-progress').hidden = true
+
+  if (state.serverStatus === false) {
+    actionBtn.disabled = true
+  } else {
+    actionBtn.disabled = false
+  }
 }
 
 function removePanel() {
@@ -325,6 +400,8 @@ function removePanel() {
     state.source = null
   }
   clearTimeout(state.progressResetTimer)
+  clearInterval(state.serverStatusTimer)
+  state.serverStatusTimer = null
 
   if (state.outsideHandler) {
     document.removeEventListener('click', state.outsideHandler)
@@ -337,6 +414,7 @@ function removePanel() {
   }
 
   state.downloadLock = false
+  state.serverStatus = null
 }
 
 function getVideoTitle() {

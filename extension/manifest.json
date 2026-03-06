@@ -3,7 +3,7 @@
   "name": "YT Grabber",
   "version": "1.0",
   "description": "Télécharge les vidéos YouTube via yt-dlp (serveur local)",
-  "permissions": ["downloads", "storage"],
+  "permissions": ["downloads", "storage", "alarms", "tabs"],
   "host_permissions": [
     "https://www.youtube.com/*",
     "http://localhost:9875/*"
