@@ -97,6 +97,12 @@ Version semantics:
   - Windows: `/APITOKEN=...`
   - If no token is provided on update/reinstall, existing token is preserved.
 
+## API Errors
+
+- API endpoints return JSON errors:
+  - `{"code":"<stable_error_code>","message":"<human_readable_message>"}`
+- `code` is stable for client-side handling; `message` is for logs/UI text.
+
 ## Updating yt-dlp
 
 - Windows: re-run the installer or replace `yt-dlp.exe` in the install folder.

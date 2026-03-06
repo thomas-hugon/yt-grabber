@@ -57,6 +57,11 @@ type downloadRequest struct {
 	Quality string `json:"quality"`
 }
 
+type apiError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 type server struct {
 	exeDir string
 	token  string
@@ -135,7 +140,7 @@ func withCORS(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 		if r.Method == http.MethodOptions {
 			if origin != "" && !isAllowedOrigin(origin) {
-				http.Error(w, "origin not allowed", http.StatusForbidden)
+				writeAPIError(w, http.StatusForbidden, "origin_not_allowed", "origin not allowed")
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -157,7 +162,7 @@ func isAllowedOrigin(origin string) bool {
 
 func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
@@ -169,13 +174,13 @@ func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) requireAuth(w http.ResponseWriter, r *http.Request) bool {
 	if s.token == "" {
-		http.Error(w, "server token not configured", http.StatusServiceUnavailable)
+		writeAPIError(w, http.StatusServiceUnavailable, "token_not_configured", "server token not configured")
 		return false
 	}
 
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin != "" && !isAllowedOrigin(origin) {
-		http.Error(w, "origin not allowed", http.StatusForbidden)
+		writeAPIError(w, http.StatusForbidden, "origin_not_allowed", "origin not allowed")
 		return false
 	}
 
@@ -184,11 +189,11 @@ func (s *server) requireAuth(w http.ResponseWriter, r *http.Request) bool {
 		provided = strings.TrimSpace(r.URL.Query().Get("token"))
 	}
 	if provided == "" {
-		http.Error(w, "missing token", http.StatusUnauthorized)
+		writeAPIError(w, http.StatusUnauthorized, "token_missing", "missing token")
 		return false
 	}
 	if subtle.ConstantTimeCompare([]byte(provided), []byte(s.token)) != 1 {
-		http.Error(w, "invalid token", http.StatusUnauthorized)
+		writeAPIError(w, http.StatusUnauthorized, "token_invalid", "invalid token")
 		return false
 	}
 	return true
@@ -255,7 +260,7 @@ func loadAPIToken(exeDir string) (string, error) {
 
 func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		return
 	}
 	if !s.requireAuth(w, r) {
@@ -264,7 +269,7 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 
 	var req downloadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid json body", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid json body")
 		return
 	}
 	req.URL = strings.TrimSpace(req.URL)
@@ -272,29 +277,29 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	req.Format = strings.ToLower(strings.TrimSpace(req.Format))
 	req.Quality = strings.ToLower(strings.TrimSpace(req.Quality))
 	if req.URL == "" {
-		http.Error(w, "url is required", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "url_required", "url is required")
 		return
 	}
 	if req.Title == "" {
 		req.Title = "YouTube Download"
 	}
 	if req.Format != "mp4" && req.Format != "mp3" {
-		http.Error(w, "format must be mp4 or mp3", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "invalid_format", "format must be mp4 or mp3")
 		return
 	}
 	if !isAllowedVideoURL(req.URL) {
-		http.Error(w, "url must target youtube.com/watch or m.youtube.com/watch", http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, "invalid_url", "url must target youtube.com/watch or m.youtube.com/watch")
 		return
 	}
 
 	jobID, err := newJobID()
 	if err != nil {
-		http.Error(w, "failed to create job id", http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "job_id_generation_failed", "failed to create job id")
 		return
 	}
 	jobToken, err := newSecretToken(16)
 	if err != nil {
-		http.Error(w, "failed to create job token", http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "job_token_generation_failed", "failed to create job token")
 		return
 	}
 	j := &Job{Status: "queued", Title: req.Title, JobToken: jobToken}
@@ -302,7 +307,7 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	if len(s.jobs) >= maxPendingJobs {
 		s.mu.Unlock()
-		http.Error(w, "too many active jobs, try again later", http.StatusTooManyRequests)
+		writeAPIError(w, http.StatusTooManyRequests, "too_many_jobs", "too many active jobs, try again later")
 		return
 	}
 	s.jobs[jobID] = j
@@ -317,12 +322,12 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleProgress(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		return
 	}
 	jobID := strings.TrimPrefix(r.URL.Path, "/progress/")
 	if jobID == "" {
-		http.NotFound(w, r)
+		writeAPIError(w, http.StatusNotFound, "job_id_missing", "job id is required")
 		return
 	}
 	if !s.requireJobAccess(w, r, jobID) {
@@ -335,7 +340,7 @@ func (s *server) handleProgress(w http.ResponseWriter, r *http.Request) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "streaming_unsupported", "streaming unsupported")
 		return
 	}
 
@@ -361,12 +366,12 @@ func (s *server) handleProgress(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		return
 	}
 	jobID := strings.TrimPrefix(r.URL.Path, "/file/")
 	if jobID == "" {
-		http.NotFound(w, r)
+		writeAPIError(w, http.StatusNotFound, "job_id_missing", "job id is required")
 		return
 	}
 	if !s.requireJobAccess(w, r, jobID) {
@@ -375,14 +380,14 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 
 	j, ok := s.getJob(jobID)
 	if !ok {
-		http.NotFound(w, r)
+		writeAPIError(w, http.StatusNotFound, "job_not_found", "job not found")
 		return
 	}
 
 	j.mu.Lock()
 	if j.Status != "ready" || j.Filepath == "" {
 		j.mu.Unlock()
-		http.Error(w, "file not ready", http.StatusConflict)
+		writeAPIError(w, http.StatusConflict, "file_not_ready", "file not ready")
 		return
 	}
 	path := j.Filepath
@@ -391,14 +396,14 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 
 	f, err := os.Open(path)
 	if err != nil {
-		http.Error(w, "file unavailable", http.StatusGone)
+		writeAPIError(w, http.StatusGone, "file_unavailable", "file unavailable")
 		return
 	}
 	defer f.Close()
 
 	st, err := f.Stat()
 	if err != nil {
-		http.Error(w, "file stat failed", http.StatusInternalServerError)
+		writeAPIError(w, http.StatusInternalServerError, "file_stat_failed", "file stat failed")
 		return
 	}
 
@@ -769,7 +774,7 @@ func isAllowedVideoURL(raw string) bool {
 func (s *server) requireJobAccess(w http.ResponseWriter, r *http.Request, jobID string) bool {
 	j, ok := s.getJob(jobID)
 	if !ok {
-		http.NotFound(w, r)
+		writeAPIError(w, http.StatusNotFound, "job_not_found", "job not found")
 		return false
 	}
 	provided := strings.TrimSpace(r.URL.Query().Get("job_token"))
@@ -783,10 +788,17 @@ func (s *server) requireJobAccess(w http.ResponseWriter, r *http.Request, jobID 
 		if valid {
 			return true
 		}
-		http.Error(w, "invalid job token", http.StatusUnauthorized)
+		writeAPIError(w, http.StatusUnauthorized, "job_token_invalid", "invalid job token")
 		return false
 	}
 	return s.requireAuth(w, r)
+}
+
+func writeAPIError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, apiError{
+		Code:    code,
+		Message: message,
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

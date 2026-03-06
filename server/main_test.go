@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -119,6 +120,9 @@ func TestRequireAuth(t *testing.T) {
 	if missRec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", missRec.Code)
 	}
+	if code := readErrorCode(t, missRec); code != "token_missing" {
+		t.Fatalf("expected error code token_missing, got %q", code)
+	}
 
 	badOriginReq := httptest.NewRequest(http.MethodPost, "http://localhost/download?token=secret-token", nil)
 	badOriginReq.Header.Set("Origin", "https://evil.example.com")
@@ -128,6 +132,9 @@ func TestRequireAuth(t *testing.T) {
 	}
 	if badOriginRec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", badOriginRec.Code)
+	}
+	if code := readErrorCode(t, badOriginRec); code != "origin_not_allowed" {
+		t.Fatalf("expected error code origin_not_allowed, got %q", code)
 	}
 }
 
@@ -296,4 +303,14 @@ func writeExecutable(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatalf("os.WriteFile(%q) error: %v", path, err)
 	}
+}
+
+func readErrorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode error body: %v; body=%q", err, rec.Body.String())
+	}
+	code, _ := payload["code"].(string)
+	return code
 }
