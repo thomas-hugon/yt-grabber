@@ -3,6 +3,7 @@ const STATUS_ALARM = 'ytg-server-health'
 const TOKEN_KEY = 'apiToken'
 const JOB_ID_RE = /^[a-f0-9]{16}$/i
 const TOKEN_RE = /^[a-f0-9]{64}$/i
+const JOB_TOKEN_RE = /^[a-f0-9]{32}$/i
 
 function randomHex(bytes = 32) {
   const buf = new Uint8Array(bytes)
@@ -126,15 +127,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return
   }
 
-  const token = typeof message.token === 'string' ? message.token.trim() : ''
-  if (!token) {
-    sendResponse({ ok: false, error: 'missing api token' })
+  const jobToken = typeof message.jobToken === 'string' ? message.jobToken.trim() : ''
+  if (!JOB_TOKEN_RE.test(jobToken)) {
+    sendResponse({ ok: false, error: 'invalid job token' })
     return
   }
 
   chrome.downloads.download(
     {
-      url: `http://localhost:9875/file/${message.jobId}?token=${encodeURIComponent(token)}`,
+      url: `http://localhost:9875/file/${message.jobId}?job_token=${encodeURIComponent(jobToken)}`,
       conflictAction: 'uniquify'
     },
     () => {

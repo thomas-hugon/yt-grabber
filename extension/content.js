@@ -12,7 +12,9 @@ const state = {
   apiToken: null,
   replacedNativeButton: null,
   downloadContext: null,
-  lockupInjectQueued: false
+  lockupInjectQueued: false,
+  panelAnchorEl: null,
+  pendingInjectRoots: []
 }
 
 const selectors = [
@@ -39,7 +41,7 @@ const CLIENT_BLOCK_WARNING = 'Connexion locale bloquée par le navigateur (Shiel
 function watchPage() {
   if (state.observer) return
 
-  state.observer = new MutationObserver(() => {
+  state.observer = new MutationObserver(mutations => {
     if (location.href !== state.currentUrl) {
       state.currentUrl = location.href
       removePanel()
@@ -48,18 +50,33 @@ function watchPage() {
       return
     }
 
-    queueCardInject()
+    queueCardInject(collectInjectRoots(mutations))
   })
 
   state.observer.observe(document.body, { childList: true, subtree: true })
 }
 
-function queueCardInject() {
+function collectInjectRoots(mutations) {
+  const roots = []
+  mutations.forEach(m => {
+    m.addedNodes?.forEach(node => {
+      if (!(node instanceof Element)) return
+      roots.push(node)
+    })
+  })
+  return roots
+}
+
+function queueCardInject(roots = []) {
+  if (roots.length > 0) {
+    state.pendingInjectRoots.push(...roots)
+  }
   if (state.lockupInjectQueued) return
   state.lockupInjectQueued = true
   setTimeout(() => {
     state.lockupInjectQueued = false
-    injectCardButtons()
+    const rootsToScan = state.pendingInjectRoots.length > 0 ? state.pendingInjectRoots.splice(0) : [document]
+    injectCardButtons(rootsToScan)
   }, 250)
 }
 
@@ -73,9 +90,20 @@ function scheduleInject() {
       const target = resolveInjectionTarget(actions)
       if (target) injectButton(target)
     }
-    injectCardButtons()
+    injectCardButtons([document])
     if (tries >= 40) clearInterval(state.injectTimer)
   }, 300)
+}
+
+function collectNodes(roots, selector) {
+  const uniq = new Set()
+  roots.forEach(root => {
+    const base = root instanceof Document ? root.documentElement : root
+    if (!(base instanceof Element)) return
+    if (base.matches(selector)) uniq.add(base)
+    base.querySelectorAll(selector).forEach(node => uniq.add(node))
+  })
+  return Array.from(uniq)
 }
 
 function resolveInjectionTarget(anchor) {
@@ -146,8 +174,8 @@ function normalizeVideoURL(href) {
   }
 }
 
-function injectLockupButtons() {
-  const lockups = document.querySelectorAll('yt-lockup-view-model')
+function injectLockupButtons(roots) {
+  const lockups = collectNodes(roots, 'yt-lockup-view-model')
   let injected = 0
 
   lockups.forEach(lockup => {
@@ -186,8 +214,8 @@ function injectLockupButtons() {
   return injected
 }
 
-function injectLegacyCardButtons() {
-  const cards = document.querySelectorAll('ytd-compact-video-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-rich-grid-media')
+function injectLegacyCardButtons(roots) {
+  const cards = collectNodes(roots, 'ytd-compact-video-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-rich-grid-media')
   let injected = 0
 
   cards.forEach(card => {
@@ -225,8 +253,8 @@ function injectLegacyCardButtons() {
   return injected
 }
 
-function injectCardButtons() {
-  return injectLockupButtons() + injectLegacyCardButtons()
+function injectCardButtons(roots) {
+  return injectLockupButtons(roots) + injectLegacyCardButtons(roots)
 }
 
 function removeButton() {
@@ -242,6 +270,9 @@ function removeButton() {
 
 function onTriggerClick(evt) {
   const trigger = evt?.currentTarget
+  if (trigger instanceof Element) {
+    state.panelAnchorEl = trigger
+  }
   const forcedURL = trigger?.dataset?.url || location.href
   const forcedTitle = (trigger?.dataset?.title || '').trim()
   state.downloadContext = {
@@ -257,7 +288,7 @@ function onTriggerClick(evt) {
 }
 
 function buildPanel() {
-  const trigger = document.getElementById('ytg-trigger')
+  const trigger = state.panelAnchorEl || document.getElementById('ytg-trigger')
   if (!trigger) return
 
   const panel = document.createElement('div')
@@ -372,14 +403,13 @@ async function pingServer() {
 }
 
 function getApiToken() {
-  if (state.apiToken) return Promise.resolve(state.apiToken)
   return new Promise(resolve => {
     chrome.runtime.sendMessage({ action: 'getApiToken' }, response => {
       if (chrome.runtime.lastError || !response || response.ok !== true || !response.token) {
         resolve('')
         return
       }
-      state.apiToken = response.token
+      state.apiToken = response.token.trim()
       resolve(state.apiToken)
     })
   })
@@ -577,7 +607,18 @@ async function onDownloadClick() {
   }
 
   status.textContent = 'Téléchargement en cours...'
-  const source = new EventSource(`http://localhost:9875/progress/${payload.job_id}?token=${encodeURIComponent(apiToken)}`)
+  const jobToken = typeof payload.job_token === 'string' ? payload.job_token.trim() : ''
+  if (!jobToken) {
+    status.textContent = 'Réponse serveur invalide'
+    warning.textContent = 'Token de job manquant dans la réponse serveur.'
+    warning.hidden = false
+    fill.classList.add('error')
+    actionBtn.disabled = false
+    state.downloadLock = false
+    return
+  }
+
+  const source = new EventSource(`http://localhost:9875/progress/${payload.job_id}?job_token=${encodeURIComponent(jobToken)}`)
   state.source = source
 
   source.onmessage = event => {
@@ -610,7 +651,7 @@ async function onDownloadClick() {
       fill.classList.add('done')
       source.close()
       state.source = null
-      chrome.runtime.sendMessage({ action: 'download', jobId: payload.job_id, token: apiToken }, response => {
+      chrome.runtime.sendMessage({ action: 'download', jobId: payload.job_id, jobToken }, response => {
         if (chrome.runtime.lastError || !response || response.ok !== true) {
           status.textContent = 'Téléchargement navigateur refusé'
           warning.textContent = response?.error || chrome.runtime.lastError?.message || 'Le navigateur a refusé le téléchargement.'
@@ -695,6 +736,7 @@ function removePanel() {
   state.downloadLock = false
   state.serverStatus = null
   state.downloadContext = null
+  state.panelAnchorEl = null
 }
 
 function getVideoTitle() {

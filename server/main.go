@@ -33,6 +33,7 @@ type Job struct {
 	Speed    string  `json:"speed"`
 	Eta      string  `json:"eta"`
 	Title    string  `json:"title"`
+	JobToken string  `json:"-"`
 	Filepath string  `json:"-"`
 	Filename string  `json:"filename"`
 	Error    string  `json:"error"`
@@ -49,12 +50,20 @@ type server struct {
 	exeDir string
 	token  string
 	jobs   map[string]*Job
+	slots  chan struct{}
 	mu     sync.RWMutex
 }
 
 var progressRe = regexp.MustCompile(`\[download\]\s+([0-9.]+)%.*?at\s+([^\s]+).*?ETA\s+([0-9:]+)`)
+var urlRe = regexp.MustCompile(`https?://\S+`)
 var version = "dev"
 var commit = "unknown"
+
+const (
+	maxConcurrentDownloads = 3
+	maxPendingJobs         = 60
+	errorJobTTL            = 10 * time.Minute
+)
 
 func main() {
 	if shouldPrintVersion(os.Args[1:]) {
@@ -73,7 +82,12 @@ func main() {
 		log.Printf("api token not loaded: %v", err)
 	}
 
-	s := &server{exeDir: exeDir, token: apiToken, jobs: make(map[string]*Job)}
+	s := &server{
+		exeDir: exeDir,
+		token:  apiToken,
+		jobs:   make(map[string]*Job),
+		slots:  make(chan struct{}, maxConcurrentDownloads),
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ping", s.handlePing)
 	mux.HandleFunc("/download", s.handleDownload)
@@ -257,20 +271,37 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "format must be mp4 or mp3", http.StatusBadRequest)
 		return
 	}
+	if !isAllowedVideoURL(req.URL) {
+		http.Error(w, "url must target youtube.com/watch or m.youtube.com/watch", http.StatusBadRequest)
+		return
+	}
 
 	jobID, err := newJobID()
 	if err != nil {
 		http.Error(w, "failed to create job id", http.StatusInternalServerError)
 		return
 	}
-	j := &Job{Status: "queued", Title: req.Title}
+	jobToken, err := newSecretToken(16)
+	if err != nil {
+		http.Error(w, "failed to create job token", http.StatusInternalServerError)
+		return
+	}
+	j := &Job{Status: "queued", Title: req.Title, JobToken: jobToken}
 
 	s.mu.Lock()
+	if len(s.jobs) >= maxPendingJobs {
+		s.mu.Unlock()
+		http.Error(w, "too many active jobs, try again later", http.StatusTooManyRequests)
+		return
+	}
 	s.jobs[jobID] = j
 	s.mu.Unlock()
 
 	go s.runDownload(jobID, req)
-	writeJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID})
+	writeJSON(w, http.StatusAccepted, map[string]string{
+		"job_id":    jobID,
+		"job_token": jobToken,
+	})
 }
 
 func (s *server) handleProgress(w http.ResponseWriter, r *http.Request) {
@@ -278,12 +309,12 @@ func (s *server) handleProgress(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !s.requireAuth(w, r) {
-		return
-	}
 	jobID := strings.TrimPrefix(r.URL.Path, "/progress/")
 	if jobID == "" {
 		http.NotFound(w, r)
+		return
+	}
+	if !s.requireJobAccess(w, r, jobID) {
 		return
 	}
 
@@ -322,12 +353,12 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !s.requireAuth(w, r) {
-		return
-	}
 	jobID := strings.TrimPrefix(r.URL.Path, "/file/")
 	if jobID == "" {
 		http.NotFound(w, r)
+		return
+	}
+	if !s.requireJobAccess(w, r, jobID) {
 		return
 	}
 
@@ -402,20 +433,23 @@ func (s *server) runDownload(jobID string, req downloadRequest) {
 		return
 	}
 
+	s.slots <- struct{}{}
+	defer func() { <-s.slots }()
+
 	ytdlpPath, err := resolveBinary("yt-dlp", s.exeDir)
 	if err != nil {
-		s.failJob(j, "yt-dlp not found")
+		s.failJob(jobID, j, "yt-dlp not found")
 		return
 	}
 	ffmpegPath, err := resolveBinary("ffmpeg", s.exeDir)
 	if err != nil {
-		s.failJob(j, "ffmpeg not found")
+		s.failJob(jobID, j, "ffmpeg not found")
 		return
 	}
 
 	tmpDir, err := os.MkdirTemp("", "ytgrabber-*")
 	if err != nil {
-		s.failJob(j, "unable to create temp directory")
+		s.failJob(jobID, j, "unable to create temp directory")
 		return
 	}
 
@@ -428,7 +462,7 @@ func (s *server) runDownload(jobID string, req downloadRequest) {
 	args := []string{"--newline", "--progress", "--ffmpeg-location", ffmpegPath}
 	args = append(args, buildFormatArgs(req.Format, req.Quality)...)
 	args = append(args, "-o", filepath.Join(tmpDir, "%(title)s.%(ext)s"), req.URL)
-	log.Printf("job %s yt-dlp command: %s", jobID, formatCommand(ytdlpPath, args))
+	log.Printf("job %s yt-dlp command: %s [URL redacted]", jobID, formatCommand(ytdlpPath, args[:len(args)-1]))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -436,19 +470,19 @@ func (s *server) runDownload(jobID string, req downloadRequest) {
 	cmd := exec.CommandContext(ctx, ytdlpPath, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		s.failJob(j, "failed to open yt-dlp output")
+		s.failJob(jobID, j, "failed to open yt-dlp output")
 		_ = os.RemoveAll(tmpDir)
 		return
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		s.failJob(j, "failed to open yt-dlp error stream")
+		s.failJob(jobID, j, "failed to open yt-dlp error stream")
 		_ = os.RemoveAll(tmpDir)
 		return
 	}
 
 	if err := cmd.Start(); err != nil {
-		s.failJob(j, "failed to start yt-dlp")
+		s.failJob(jobID, j, "failed to start yt-dlp")
 		_ = os.RemoveAll(tmpDir)
 		return
 	}
@@ -467,19 +501,19 @@ func (s *server) runDownload(jobID string, req downloadRequest) {
 	waitErr := cmd.Wait()
 	wg.Wait()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		s.failJob(j, "download timeout")
+		s.failJob(jobID, j, "download timeout")
 		_ = os.RemoveAll(tmpDir)
 		return
 	}
 	if waitErr != nil {
-		s.failJob(j, "download failed")
+		s.failJob(jobID, j, "download failed")
 		_ = os.RemoveAll(tmpDir)
 		return
 	}
 
 	outPath, outName, err := findOutputFile(tmpDir)
 	if err != nil {
-		s.failJob(j, "download completed but no output file found")
+		s.failJob(jobID, j, "download completed but no output file found")
 		_ = os.RemoveAll(tmpDir)
 		return
 	}
@@ -503,7 +537,7 @@ func (s *server) consumeOutput(j *Job, r io.Reader) {
 		if line == "" {
 			continue
 		}
-		log.Println(line)
+		log.Println(redactURLs(line))
 		if m := progressRe.FindStringSubmatch(line); len(m) == 4 {
 			progress := parseProgress(m[1])
 			j.mu.Lock()
@@ -520,6 +554,10 @@ func (s *server) consumeOutput(j *Job, r io.Reader) {
 			j.mu.Unlock()
 		}
 	}
+}
+
+func redactURLs(line string) string {
+	return urlRe.ReplaceAllString(line, "[redacted-url]")
 }
 
 func parseProgress(v string) float64 {
@@ -601,7 +639,7 @@ func findOutputFile(dir string) (string, string, error) {
 	return "", "", errors.New("no output file")
 }
 
-func (s *server) failJob(j *Job, msg string) {
+func (s *server) failJob(jobID string, j *Job, msg string) {
 	j.mu.Lock()
 	j.Status = "error"
 	j.Error = msg
@@ -609,6 +647,12 @@ func (s *server) failJob(j *Job, msg string) {
 	j.Eta = ""
 	j.mu.Unlock()
 	log.Println(msg)
+	go func() {
+		time.Sleep(errorJobTTL)
+		s.mu.Lock()
+		delete(s.jobs, jobID)
+		s.mu.Unlock()
+	}()
 }
 
 func (s *server) getJob(jobID string) (*Job, bool) {
@@ -638,6 +682,49 @@ func newJobID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func newSecretToken(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func isAllowedVideoURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host != "www.youtube.com" && host != "youtube.com" && host != "m.youtube.com" {
+		return false
+	}
+	return u.Path == "/watch" && u.Query().Get("v") != ""
+}
+
+func (s *server) requireJobAccess(w http.ResponseWriter, r *http.Request, jobID string) bool {
+	j, ok := s.getJob(jobID)
+	if !ok {
+		http.NotFound(w, r)
+		return false
+	}
+	provided := strings.TrimSpace(r.URL.Query().Get("job_token"))
+	if provided == "" {
+		provided = strings.TrimSpace(r.Header.Get("X-YTG-Job-Token"))
+	}
+	if provided != "" {
+		j.mu.Lock()
+		valid := subtle.ConstantTimeCompare([]byte(provided), []byte(j.JobToken)) == 1
+		j.mu.Unlock()
+		if valid {
+			return true
+		}
+		http.Error(w, "invalid job token", http.StatusUnauthorized)
+		return false
+	}
+	return s.requireAuth(w, r)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
