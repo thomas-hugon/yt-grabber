@@ -40,3 +40,35 @@ func TestServerVersion(t *testing.T) {
 		t.Fatalf("serverVersion() with blank version = %q, want %q", got, "dev")
 	}
 }
+
+func TestServerCommit(t *testing.T) {
+	original := commit
+	t.Cleanup(func() { commit = original })
+
+	commit = "abc123"
+	if got := serverCommit(); got != "abc123" {
+		t.Fatalf("serverCommit() = %q, want %q", got, "abc123")
+	}
+
+	commit = "   "
+	if got := serverCommit(); got != "unknown" {
+		t.Fatalf("serverCommit() with blank commit = %q, want %q", got, "unknown")
+	}
+}
+
+func TestDisplayVersion(t *testing.T) {
+	originalVersion := version
+	originalCommit := commit
+	t.Cleanup(func() {
+		version = originalVersion
+		commit = originalCommit
+	})
+
+	version = "v2026.03.06-10"
+	commit = "5fbeec16eb788b0deb4441a498978113a7c13e8a"
+
+	want := "v2026.03.06-10 (5fbeec16eb788b0deb4441a498978113a7c13e8a)"
+	if got := displayVersion(); got != want {
+		t.Fatalf("displayVersion() = %q, want %q", got, want)
+	}
+}

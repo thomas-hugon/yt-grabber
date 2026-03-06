@@ -60,7 +60,11 @@ Then load the Chrome extension manually from the extracted extension folder.
 ```
 
 - API:
-  `GET http://localhost:9875/ping` returns `{"status":"ok","version":"<build-version>"}`.
+  `GET http://localhost:9875/ping` returns `{"status":"ok","version":"<release-tag>","commit":"<git-sha>"}`.
+
+Version semantics:
+- `version`: human-friendly release tag (example: `v2026.03.06-10`)
+- `commit`: exact git commit SHA for traceability
 
 ## Updating yt-dlp
 

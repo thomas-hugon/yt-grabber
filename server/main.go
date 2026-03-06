@@ -50,10 +50,11 @@ type server struct {
 
 var progressRe = regexp.MustCompile(`\[download\]\s+([0-9.]+)%.*?at\s+([^\s]+).*?ETA\s+([0-9:]+)`)
 var version = "dev"
+var commit = "unknown"
 
 func main() {
 	if shouldPrintVersion(os.Args[1:]) {
-		fmt.Println(serverVersion())
+		fmt.Println(displayVersion())
 		return
 	}
 
@@ -108,7 +109,11 @@ func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": serverVersion()})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "ok",
+		"version": serverVersion(),
+		"commit":  serverCommit(),
+	})
 }
 
 func shouldPrintVersion(args []string) bool {
@@ -129,6 +134,18 @@ func serverVersion() string {
 		return "dev"
 	}
 	return v
+}
+
+func serverCommit() string {
+	c := strings.TrimSpace(commit)
+	if c == "" {
+		return "unknown"
+	}
+	return c
+}
+
+func displayVersion() string {
+	return fmt.Sprintf("%s (%s)", serverVersion(), serverCommit())
 }
 
 func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {

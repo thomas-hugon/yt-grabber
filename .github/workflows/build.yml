@@ -5,12 +5,29 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  SERVER_VERSION: ${{ github.sha }}
-
 jobs:
+  compute-version:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.vars.outputs.release_tag }}
+      release_name: ${{ steps.vars.outputs.release_name }}
+      server_version: ${{ steps.vars.outputs.server_version }}
+      server_commit: ${{ steps.vars.outputs.server_commit }}
+    steps:
+      - name: Compute release/server version metadata
+        id: vars
+        shell: bash
+        run: |
+          DATE="$(date +'%Y.%m.%d')"
+          TAG="v${DATE}-${GITHUB_RUN_NUMBER}"
+          echo "release_tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_name=YT Grabber v${DATE}" >> "$GITHUB_OUTPUT"
+          echo "server_version=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "server_commit=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
   build-server-windows:
     runs-on: ubuntu-latest
+    needs: compute-version
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -20,7 +37,7 @@ jobs:
         run: |
           cd server
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
-            go build -ldflags="-s -w -H=windowsgui -X main.version=${SERVER_VERSION}" \
+            go build -ldflags="-s -w -H=windowsgui -X main.version=${{ needs.compute-version.outputs.server_version }} -X main.commit=${{ needs.compute-version.outputs.server_commit }}" \
             -o ../YTGrabber-Server.exe .
       - uses: actions/upload-artifact@v4
         with:
@@ -29,6 +46,7 @@ jobs:
 
   build-server-linux:
     runs-on: ubuntu-latest
+    needs: compute-version
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -37,7 +55,7 @@ jobs:
       - name: Build Linux server
         run: |
           cd server
-          CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${SERVER_VERSION}" -o ../YTGrabber-Server-linux .
+          CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${{ needs.compute-version.outputs.server_version }} -X main.commit=${{ needs.compute-version.outputs.server_commit }}" -o ../YTGrabber-Server-linux .
       - uses: actions/upload-artifact@v4
         with:
           name: server-linux
@@ -45,6 +63,7 @@ jobs:
 
   build-server-mac:
     runs-on: macos-latest
+    needs: compute-version
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -53,11 +72,11 @@ jobs:
       - name: Build macOS arm64 server
         run: |
           cd server
-          GOARCH=arm64 go build -ldflags="-s -w -X main.version=${SERVER_VERSION}" -o ../YTGrabber-Server-mac-arm64 .
+          GOARCH=arm64 go build -ldflags="-s -w -X main.version=${{ needs.compute-version.outputs.server_version }} -X main.commit=${{ needs.compute-version.outputs.server_commit }}" -o ../YTGrabber-Server-mac-arm64 .
       - name: Build macOS amd64 server
         run: |
           cd server
-          GOARCH=amd64 go build -ldflags="-s -w -X main.version=${SERVER_VERSION}" -o ../YTGrabber-Server-mac-amd64 .
+          GOARCH=amd64 go build -ldflags="-s -w -X main.version=${{ needs.compute-version.outputs.server_version }} -X main.commit=${{ needs.compute-version.outputs.server_commit }}" -o ../YTGrabber-Server-mac-amd64 .
       - uses: actions/upload-artifact@v4
         with:
           name: server-mac
@@ -125,6 +144,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs:
+      - compute-version
       - build-server-windows
       - build-server-linux
       - build-server-mac
@@ -136,12 +156,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-      - name: Release date
-        run: echo "DATE=$(date +'%Y.%m.%d')" >> "$GITHUB_ENV"
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.DATE }}-${{ github.run_number }}
-          name: YT Grabber v${{ env.DATE }}
+          tag_name: ${{ needs.compute-version.outputs.release_tag }}
+          name: ${{ needs.compute-version.outputs.release_name }}
           body: |
             ## Windows
             Téléchargez et lancez **YTGrabber-Setup.exe**, puis suivez le guide pour charger l'extension Chrome.
