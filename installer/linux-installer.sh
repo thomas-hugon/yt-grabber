@@ -282,14 +282,15 @@ download_nodejs_local() {
 
   local tmpdir
   tmpdir="$(mktemp -d)"
-  local version index_url tar_name url
-  index_url="https://nodejs.org/dist/latest-v22.x/"
-  version="$(curl -fsSL "$index_url" | sed -n 's/.*href="node-\(v22\.[0-9.]*\)-linux-'"$node_arch"'\.tar\.xz".*/\1/p' | head -n1)"
-  [[ -n "$version" ]] || {
+  local index_url tar_name version url
+  index_url="https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt"
+  tar_name="$(curl -fsSL "$index_url" | awk '/ node-v22\.[0-9.]*-linux-'"$node_arch"'\.tar\.xz$/ {print $2; exit}')"
+  [[ -n "$tar_name" ]] || {
     rm -rf "$tmpdir"
     fail "Failed to resolve latest Node.js v22 release for linux-$node_arch"
   }
-  tar_name="node-${version}-linux-${node_arch}.tar.xz"
+  version="${tar_name#node-}"
+  version="${version%-linux-${node_arch}.tar.xz}"
   url="https://nodejs.org/dist/${version}/${tar_name}"
 
   echo "Downloading Node.js runtime..."
