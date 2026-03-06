@@ -1,0 +1,11 @@
+{
+  "name": "yt-grabber-extension-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke": "node smoke.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.52.0"
+  }
+}

@@ -6,3 +6,4 @@ ffmpeg_tmp/
 __pycache__/
 YTGrabber-Server-linux
 YTGrabber-Server-mac-*
+extension/tests/node_modules/
