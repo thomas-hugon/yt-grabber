@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -177,6 +179,121 @@ func TestFindOutputFilePrefersMostRecentMedia(t *testing.T) {
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(%q) error: %v", path, err)
+	}
+}
+
+func TestBuildFormatArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		format  string
+		quality string
+		want    []string
+	}{
+		{
+			name:    "mp3",
+			format:  "mp3",
+			quality: "best",
+			want:    []string{"-f", "bestaudio/best", "--extract-audio", "--audio-format", "mp3", "--audio-quality", "192K"},
+		},
+		{
+			name:    "mp4_1080",
+			format:  "mp4",
+			quality: "1080",
+			want:    []string{"-f", "bestvideo[vcodec^=avc1][height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]", "--merge-output-format", "mp4"},
+		},
+		{
+			name:    "mp4_prefixed_quality",
+			format:  "mp4",
+			quality: "p720",
+			want:    []string{"-f", "bestvideo[vcodec^=avc1][height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]", "--merge-output-format", "mp4"},
+		},
+		{
+			name:    "mp4_default",
+			format:  "mp4",
+			quality: "best",
+			want:    []string{"-f", "bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best", "--merge-output-format", "mp4"},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := buildFormatArgs(tc.format, tc.quality)
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Fatalf("buildFormatArgs(%q, %q) = %v, want %v", tc.format, tc.quality, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseProgress(t *testing.T) {
+	tests := []struct {
+		input string
+		want  float64
+	}{
+		{input: "72.5", want: 72.5},
+		{input: "-5", want: 0},
+		{input: "145", want: 100},
+		{input: "invalid", want: 0},
+	}
+
+	for _, tc := range tests {
+		if got := parseProgress(tc.input); got != tc.want {
+			t.Fatalf("parseProgress(%q) = %v, want %v", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestResolveBinaryForOS(t *testing.T) {
+	exeDir := t.TempDir()
+	pathDir := t.TempDir()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("binary resolution tests rely on POSIX executable permissions")
+	}
+
+	localLinuxBinary := filepath.Join(exeDir, "yt-dlp")
+	writeExecutable(t, localLinuxBinary, "#!/bin/sh\nexit 0\n")
+	if got, err := resolveBinaryForOS("yt-dlp", exeDir, "linux"); err != nil || got != localLinuxBinary {
+		t.Fatalf("resolveBinaryForOS local linux = (%q, %v), want (%q, nil)", got, err, localLinuxBinary)
+	}
+
+	if err := os.Remove(localLinuxBinary); err != nil {
+		t.Fatalf("os.Remove(localLinuxBinary) error: %v", err)
+	}
+
+	pathBinary := filepath.Join(pathDir, "yt-dlp")
+	writeExecutable(t, pathBinary, "#!/bin/sh\nexit 0\n")
+	origPath := os.Getenv("PATH")
+	if err := os.Setenv("PATH", pathDir); err != nil {
+		t.Fatalf("os.Setenv(PATH) error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Setenv("PATH", origPath)
+	})
+
+	if got, err := resolveBinaryForOS("yt-dlp", exeDir, "linux"); err != nil || got != pathBinary {
+		t.Fatalf("resolveBinaryForOS path linux = (%q, %v), want (%q, nil)", got, err, pathBinary)
+	}
+
+	localWindowsBinary := filepath.Join(exeDir, "yt-dlp.exe")
+	writeExecutable(t, localWindowsBinary, "#!/bin/sh\nexit 0\n")
+	if got, err := resolveBinaryForOS("yt-dlp", exeDir, "windows"); err != nil || got != localWindowsBinary {
+		t.Fatalf("resolveBinaryForOS local windows = (%q, %v), want (%q, nil)", got, err, localWindowsBinary)
+	}
+
+	if err := os.Remove(localWindowsBinary); err != nil {
+		t.Fatalf("os.Remove(localWindowsBinary) error: %v", err)
+	}
+	if _, err := resolveBinaryForOS("yt-dlp", exeDir, "windows"); err == nil {
+		t.Fatalf("resolveBinaryForOS windows should fail when binary is not local")
+	}
+}
+
+func writeExecutable(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatalf("os.WriteFile(%q) error: %v", path, err)
 	}
 }

@@ -594,15 +594,19 @@ func buildFormatArgs(format, quality string) []string {
 }
 
 func resolveBinary(name, exeDir string) (string, error) {
+	return resolveBinaryForOS(name, exeDir, runtime.GOOS)
+}
+
+func resolveBinaryForOS(name, exeDir, goos string) (string, error) {
 	ext := ""
-	if runtime.GOOS == "windows" {
+	if goos == "windows" {
 		ext = ".exe"
 	}
 	local := filepath.Join(exeDir, name+ext)
 	if st, err := os.Stat(local); err == nil && !st.IsDir() {
 		return local, nil
 	}
-	if runtime.GOOS != "windows" {
+	if goos != "windows" {
 		if p, err := exec.LookPath(name); err == nil {
 			return p, nil
 		}
