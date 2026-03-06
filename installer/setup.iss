@@ -29,6 +29,7 @@ Name: "{group}\Désinstaller YT Grabber"; Filename: "{uninstallexe}"
 [Run]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\download-yt-dlp.ps1"" -AppDir ""{app}"""; StatusMsg: "Téléchargement de yt-dlp..."; Flags: runhidden waituntilterminated
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\download-ffmpeg.ps1"" -AppDir ""{app}"""; StatusMsg: "Téléchargement de ffmpeg..."; Flags: runhidden waituntilterminated
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$t='{param:APITOKEN|}'; if([string]::IsNullOrWhiteSpace($t)){ $b=New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); $t=($b|ForEach-Object { $_.ToString('x2') }) -join '' }; Set-Content -Path '{app}\ytgrabber.token' -Value $t -NoNewline"""; StatusMsg: "Configuration du token API..."; Flags: runhidden waituntilterminated
 Filename: "schtasks.exe"; Parameters: "/Create /TN ""YTGrabber"" /TR ""{app}\YTGrabber-Server.exe"" /SC ONLOGON /DELAY 0001:00 /RL HIGHEST /F"; Flags: runhidden waituntilterminated
 Filename: "{app}\YTGrabber-Server.exe"; Flags: nowait postinstall runhidden
 Filename: "{app}\install-extension.html"; Flags: shellexec postinstall skipifsilent; Description: "Ouvrir le guide d'installation de l'extension Chrome"
@@ -46,35 +47,8 @@ Type: files; Name: "{app}\ytgrabber.log"
 Type: filesandordirs; Name: "{app}"
 
 [Code]
-var
-  ApiToken: string;
-
-function NewTokenChunk(): string;
-var
-  G: TGUID;
-begin
-  if CreateGUID(G) = 0 then
-    Result := Lowercase(Copy(GUIDToString(G), 2, 36))
-  else
-    Result := Lowercase(IntToHex(GetTickCount64, 16));
-  StringChangeEx(Result, '-', '', True);
-end;
-
-function ResolveApiToken(): string;
-begin
-  Result := Trim(ExpandConstant('{param:APITOKEN|}'));
-  if Result = '' then
-    Result := NewTokenChunk() + NewTokenChunk();
-end;
-
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if CurStep = ssInstall then
-  begin
-    ApiToken := ResolveApiToken();
-    SaveStringToFile(ExpandConstant('{app}\ytgrabber.token'), ApiToken + #13#10, False);
-  end;
-
   if CurStep = ssPostInstall then
   begin
     if not FileExists(ExpandConstant('{app}\yt-dlp.exe')) then
