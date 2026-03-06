@@ -1,44 +1,193 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SRC_BIN="${1:-}"
 DEST_BIN="$HOME/.local/bin/ytgrabber-server"
 YT_DLP_BIN="$HOME/.local/bin/yt-dlp"
+FFMPEG_BIN="$HOME/.local/bin/ffmpeg"
 UNIT_DIR="$HOME/.config/systemd/user"
 UNIT_FILE="$UNIT_DIR/ytgrabber.service"
+START_LINE='pgrep -f "[y]tgrabber-server" >/dev/null || nohup "$HOME/.local/bin/ytgrabber-server" >/dev/null 2>&1 &'
+BASHRC="$HOME/.bashrc"
+PROFILE="$HOME/.profile"
 
-if [[ -z "$SRC_BIN" ]]; then
-  echo "Usage: $0 ./YTGrabber-Server-linux"
+MODE="install"
+SRC_BIN=""
+FFMPEG_CUSTOM_PATH=""
+DOWNLOAD_FFMPEG=0
+
+usage() {
+  cat <<EOF
+Usage:
+  $0 [options] <server-binary>
+  $0 --remove
+
+Options:
+  --update                Update an existing installation (same flow as install, with update messaging)
+  --remove                Remove YT Grabber server, binaries, and autostart configuration
+  --ffmpeg-path <path>    Use an existing ffmpeg binary from a custom path
+  --download-ffmpeg       Download a local ffmpeg binary to $FFMPEG_BIN (x86_64 only)
+  -h, --help              Show this help
+EOF
+}
+
+fail() {
+  echo "$1" >&2
   exit 1
-fi
+}
 
-if [[ ! -f "$SRC_BIN" ]]; then
-  echo "Server binary not found: $SRC_BIN"
-  exit 1
-fi
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --update)
+        [[ "$MODE" != "remove" ]] || fail "--update cannot be combined with --remove"
+        MODE="update"
+        shift
+        ;;
+      --remove)
+        [[ "$MODE" != "update" ]] || fail "--remove cannot be combined with --update"
+        MODE="remove"
+        shift
+        ;;
+      --ffmpeg-path)
+        [[ $# -ge 2 ]] || fail "--ffmpeg-path requires a value"
+        FFMPEG_CUSTOM_PATH="$2"
+        shift 2
+        ;;
+      --download-ffmpeg)
+        DOWNLOAD_FFMPEG=1
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      -*)
+        fail "Unknown option: $1"
+        ;;
+      *)
+        if [[ -n "$SRC_BIN" ]]; then
+          fail "Only one server binary path is allowed"
+        fi
+        SRC_BIN="$1"
+        shift
+        ;;
+    esac
+  done
+}
 
-mkdir -p "$HOME/.local/bin"
-install -m 0755 "$SRC_BIN" "$DEST_BIN"
+remove_start_line_if_present() {
+  local target="$1"
+  [[ -f "$target" ]] || return 0
+  local tmp
+  tmp="$(mktemp)"
+  grep -Fv "$START_LINE" "$target" > "$tmp" || true
+  mv "$tmp" "$target"
+}
 
-echo "Downloading yt-dlp..."
-curl -fsSL "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" -o "$YT_DLP_BIN"
-chmod +x "$YT_DLP_BIN"
+remove_installation() {
+  if command -v systemctl >/dev/null 2>&1 && systemctl --user --version >/dev/null 2>&1; then
+    systemctl --user disable --now ytgrabber >/dev/null 2>&1 || true
+    rm -f "$UNIT_FILE"
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+  fi
 
-if ! command -v ffmpeg >/dev/null 2>&1; then
+  pkill -f '[y]tgrabber-server' >/dev/null 2>&1 || true
+
+  remove_start_line_if_present "$BASHRC"
+  remove_start_line_if_present "$PROFILE"
+
+  rm -f "$DEST_BIN" "$YT_DLP_BIN" "$FFMPEG_BIN"
+
+  echo "YT Grabber removed from this user account."
+}
+
+download_ffmpeg_local() {
+  local arch
+  arch="$(uname -m)"
+  local url=""
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+
+  case "$arch" in
+    x86_64|amd64)
+      url="https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz"
+      ;;
+    *)
+      rm -rf "$tmpdir"
+      fail "Unsupported architecture for --download-ffmpeg: $arch. Use --ffmpeg-path instead."
+      ;;
+  esac
+
+  echo "Downloading ffmpeg..."
+  curl -fsSL "$url" -o "$tmpdir/ffmpeg.tar.xz"
+  tar -xJf "$tmpdir/ffmpeg.tar.xz" -C "$tmpdir"
+
+  local found
+  found="$(find "$tmpdir" -type f -name ffmpeg | head -n 1)"
+  [[ -n "$found" ]] || {
+    rm -rf "$tmpdir"
+    fail "Failed to find ffmpeg binary in downloaded archive"
+  }
+
+  install -m 0755 "$found" "$FFMPEG_BIN"
+  rm -rf "$tmpdir"
+  echo "Installed ffmpeg to $FFMPEG_BIN"
+}
+
+resolve_ffmpeg() {
+  if [[ -n "$FFMPEG_CUSTOM_PATH" ]]; then
+    [[ -f "$FFMPEG_CUSTOM_PATH" ]] || fail "ffmpeg path not found: $FFMPEG_CUSTOM_PATH"
+    [[ -x "$FFMPEG_CUSTOM_PATH" ]] || fail "ffmpeg path is not executable: $FFMPEG_CUSTOM_PATH"
+    install -m 0755 "$FFMPEG_CUSTOM_PATH" "$FFMPEG_BIN"
+    echo "Installed custom ffmpeg to $FFMPEG_BIN"
+    return
+  fi
+
+  if [[ "$DOWNLOAD_FFMPEG" -eq 1 ]]; then
+    download_ffmpeg_local
+    return
+  fi
+
+  if [[ -x "$FFMPEG_BIN" ]]; then
+    echo "Using existing local ffmpeg at $FFMPEG_BIN"
+    return
+  fi
+
+  if command -v ffmpeg >/dev/null 2>&1; then
+    install -m 0755 "$(command -v ffmpeg)" "$FFMPEG_BIN"
+    echo "Copied ffmpeg from PATH to $FFMPEG_BIN"
+    return
+  fi
+
   cat <<'MSG'
-ffmpeg is required but was not found in PATH.
-Install it with your package manager, for example:
-  sudo apt install ffmpeg
-  sudo pacman -S ffmpeg
-  sudo dnf install ffmpeg
-Then run this installer again.
+ffmpeg is required but was not found.
+Choose one of:
+  1) Install it with your package manager:
+     sudo apt install ffmpeg
+     sudo pacman -S ffmpeg
+     sudo dnf install ffmpeg
+  2) Re-run with --ffmpeg-path /path/to/ffmpeg
+  3) Re-run with --download-ffmpeg
 MSG
   exit 1
-fi
+}
 
-if command -v systemctl >/dev/null 2>&1 && systemctl --user --version >/dev/null 2>&1; then
-  mkdir -p "$UNIT_DIR"
-  cat > "$UNIT_FILE" <<'UNIT'
+install_or_update() {
+  [[ -n "$SRC_BIN" ]] || fail "Missing server binary path. Example: $0 ./YTGrabber-Server-linux"
+  [[ -f "$SRC_BIN" ]] || fail "Server binary not found: $SRC_BIN"
+
+  mkdir -p "$HOME/.local/bin"
+  install -m 0755 "$SRC_BIN" "$DEST_BIN"
+
+  echo "Downloading yt-dlp..."
+  curl -fsSL "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" -o "$YT_DLP_BIN"
+  chmod +x "$YT_DLP_BIN"
+
+  resolve_ffmpeg
+
+  if command -v systemctl >/dev/null 2>&1 && systemctl --user --version >/dev/null 2>&1; then
+    mkdir -p "$UNIT_DIR"
+    cat > "$UNIT_FILE" <<'UNIT'
 [Unit]
 Description=YTGrabber local download server
 After=network.target
@@ -52,32 +201,53 @@ RestartSec=5
 WantedBy=default.target
 UNIT
 
-  systemctl --user daemon-reload
-  systemctl --user enable --now ytgrabber
+    systemctl --user daemon-reload
+    systemctl --user enable --now ytgrabber
+
+    echo
+    if [[ "$MODE" == "update" ]]; then
+      echo "YT Grabber updated and running as a systemd user service."
+    else
+      echo "YT Grabber installed as a systemd user service."
+    fi
+    echo "Server URL: http://localhost:9875"
+    echo "Load the Chrome extension from: $(cd "$(dirname "$0")" && pwd)/../extension"
+    return
+  fi
+
+  echo "systemd user services are not available; enabling shell-login fallback."
+
+  if [[ -f "$BASHRC" ]]; then
+    grep -F "$START_LINE" "$BASHRC" >/dev/null 2>&1 || echo "$START_LINE" >> "$BASHRC"
+  fi
+  if [[ -f "$PROFILE" ]]; then
+    grep -F "$START_LINE" "$PROFILE" >/dev/null 2>&1 || echo "$START_LINE" >> "$PROFILE"
+  fi
+
+  nohup "$DEST_BIN" >/dev/null 2>&1 &
 
   echo
-  echo "YT Grabber installed as a systemd user service."
+  if [[ "$MODE" == "update" ]]; then
+    echo "YT Grabber updated with shell-login autostart fallback."
+  else
+    echo "YT Grabber installed with shell-login autostart fallback."
+  fi
   echo "Server URL: http://localhost:9875"
   echo "Load the Chrome extension from: $(cd "$(dirname "$0")" && pwd)/../extension"
+}
+
+parse_args "$@"
+
+if [[ -n "$FFMPEG_CUSTOM_PATH" && "$DOWNLOAD_FFMPEG" -eq 1 ]]; then
+  fail "Use either --ffmpeg-path or --download-ffmpeg, not both"
+fi
+
+if [[ "$MODE" == "remove" ]]; then
+  [[ -z "$SRC_BIN" ]] || fail "--remove does not accept a server binary path"
+  [[ -z "$FFMPEG_CUSTOM_PATH" ]] || fail "--remove cannot be combined with --ffmpeg-path"
+  [[ "$DOWNLOAD_FFMPEG" -eq 0 ]] || fail "--remove cannot be combined with --download-ffmpeg"
+  remove_installation
   exit 0
 fi
 
-echo "systemd user services are not available; enabling shell-login fallback."
-
-START_LINE='pgrep -f "[y]tgrabber-server" >/dev/null || nohup "$HOME/.local/bin/ytgrabber-server" >/dev/null 2>&1 &'
-BASHRC="$HOME/.bashrc"
-PROFILE="$HOME/.profile"
-
-if [[ -f "$BASHRC" ]]; then
-  grep -F "$START_LINE" "$BASHRC" >/dev/null 2>&1 || echo "$START_LINE" >> "$BASHRC"
-fi
-if [[ -f "$PROFILE" ]]; then
-  grep -F "$START_LINE" "$PROFILE" >/dev/null 2>&1 || echo "$START_LINE" >> "$PROFILE"
-fi
-
-nohup "$DEST_BIN" >/dev/null 2>&1 &
-
-echo
-echo "YT Grabber installed with shell-login autostart fallback."
-echo "Server URL: http://localhost:9875"
-echo "Load the Chrome extension from: $(cd "$(dirname "$0")" && pwd)/../extension"
+install_or_update

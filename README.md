@@ -24,6 +24,23 @@ chmod +x YTGrabber-linux-installer.sh
 ```
 
 This installs the server under `~/.local/bin`, installs `yt-dlp`, configures a systemd user service when available, and starts it.
+By default it also ensures a local ffmpeg binary at `~/.local/bin/ffmpeg`.
+
+Optional Linux installer flags:
+
+```bash
+# Use an existing ffmpeg from a custom location
+./YTGrabber-linux-installer.sh --ffmpeg-path /path/to/ffmpeg ./YTGrabber-Server-linux
+
+# Download ffmpeg locally for YT Grabber (x86_64)
+./YTGrabber-linux-installer.sh --download-ffmpeg ./YTGrabber-Server-linux
+
+# Update an existing install with a newer server binary
+./YTGrabber-linux-installer.sh --update ./YTGrabber-Server-linux
+
+# Fully remove YT Grabber for the current user
+./YTGrabber-linux-installer.sh --remove
+```
 
 Then load the Chrome extension manually from the extracted extension folder.
 
