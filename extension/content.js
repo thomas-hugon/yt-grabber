@@ -29,6 +29,9 @@ const formatOptions = [
   { label: 'MP3', value: 'mp3' }
 ]
 
+const SERVER_DOWN_WARNING = 'Serveur local introuvable. Lancez YTGrabber-Server puis réessayez.'
+const CLIENT_BLOCK_WARNING = 'Connexion locale bloquée par le navigateur (Shields/AdBlock). Autorisez youtube.com -> localhost:9875 puis réessayez.'
+
 function watchPage() {
   if (state.observer) return
 
@@ -232,6 +235,18 @@ async function checkServerHealth() {
   return pingServerViaBackground()
 }
 
+async function markIfClientBlocked(statusNode, warningNode) {
+  const backgroundCanReachServer = await pingServerViaBackground()
+  if (!backgroundCanReachServer) return false
+
+  if (statusNode) statusNode.textContent = 'Connexion locale bloquée par le navigateur'
+  if (warningNode) {
+    warningNode.textContent = CLIENT_BLOCK_WARNING
+    warningNode.hidden = false
+  }
+  return true
+}
+
 function applyServerState(isUp) {
   if (!state.panel) return
 
@@ -254,6 +269,7 @@ function applyServerState(isUp) {
 
   stateRoot.classList.add('offline')
   label.textContent = 'Serveur indisponible (localhost:9875)'
+  warning.textContent = SERVER_DOWN_WARNING
   warning.hidden = false
   actionBtn.disabled = true
   state.serverStatus = false
@@ -328,7 +344,11 @@ async function onDownloadClick() {
     if (!resp.ok) throw new Error(`download request failed: ${resp.status}`)
     payload = await resp.json()
   } catch (err) {
-    status.textContent = 'Impossible de démarrer le téléchargement'
+    const isBlocked = await markIfClientBlocked(status, warning)
+    if (!isBlocked) {
+      warning.textContent = SERVER_DOWN_WARNING
+      status.textContent = 'Impossible de démarrer le téléchargement'
+    }
     fill.classList.add('error')
     actionBtn.disabled = false
     state.downloadLock = false
@@ -388,10 +408,14 @@ async function onDownloadClick() {
     }
   }
 
-  source.onerror = () => {
+  source.onerror = async () => {
     source.close()
     state.source = null
-    status.textContent = 'Connexion perdue avec le serveur'
+    const isBlocked = await markIfClientBlocked(status, warning)
+    if (!isBlocked) {
+      warning.textContent = SERVER_DOWN_WARNING
+      status.textContent = 'Connexion perdue avec le serveur'
+    }
     fill.classList.add('error')
     state.downloadLock = false
     actionBtn.disabled = false

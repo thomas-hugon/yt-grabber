@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -295,6 +296,7 @@ func (s *server) runDownload(jobID string, req downloadRequest) {
 	args := []string{"--newline", "--progress", "--ffmpeg-location", ffmpegPath}
 	args = append(args, buildFormatArgs(req.Format, req.Quality)...)
 	args = append(args, "-o", filepath.Join(tmpDir, "%(title)s.%(ext)s"), req.URL)
+	log.Printf("job %s yt-dlp command: %s", jobID, formatCommand(ytdlpPath, args))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -435,6 +437,18 @@ func resolveBinary(name, exeDir string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("%s not found", name)
+}
+
+func formatCommand(bin string, args []string) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, bin)
+	parts = append(parts, args...)
+
+	quoted := make([]string, len(parts))
+	for i, p := range parts {
+		quoted[i] = strconv.Quote(p)
+	}
+	return strings.Join(quoted, " ")
 }
 
 func findOutputFile(dir string) (string, string, error) {
