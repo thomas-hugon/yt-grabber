@@ -25,9 +25,44 @@ jobs:
           echo "server_version=${TAG}" >> "$GITHUB_OUTPUT"
           echo "server_commit=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
+  lint-go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Check Go formatting
+        run: |
+          cd server
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "Go files need formatting:"
+            echo "$files"
+            exit 1
+          fi
+      - name: Go vet
+        run: |
+          cd server
+          go vet ./...
+
+  lint-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Check extension JavaScript syntax
+        run: |
+          cd extension
+          node --check content.js
+          node --check background.js
+          node --check popup.js
+
   build-server-windows:
     runs-on: ubuntu-latest
-    needs: compute-version
+    needs: [compute-version, lint-go]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -46,7 +81,7 @@ jobs:
 
   build-server-linux:
     runs-on: ubuntu-latest
-    needs: compute-version
+    needs: [compute-version, lint-go]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -63,7 +98,7 @@ jobs:
 
   build-server-mac:
     runs-on: macos-latest
-    needs: compute-version
+    needs: [compute-version, lint-go]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -86,6 +121,7 @@ jobs:
 
   build-extension:
     runs-on: ubuntu-latest
+    needs: lint-extension
     steps:
       - uses: actions/checkout@v4
       - name: Zip extension
@@ -99,7 +135,7 @@ jobs:
 
   build-linux-installer:
     runs-on: ubuntu-latest
-    needs: build-server-linux
+    needs: [build-server-linux, lint-extension]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -118,7 +154,7 @@ jobs:
 
   build-windows-installer:
     runs-on: windows-latest
-    needs: build-server-windows
+    needs: [build-server-windows, lint-extension]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -148,6 +184,8 @@ jobs:
       - build-server-windows
       - build-server-linux
       - build-server-mac
+      - lint-go
+      - lint-extension
       - build-extension
       - build-linux-installer
       - build-windows-installer

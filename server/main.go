@@ -40,6 +40,16 @@ type Job struct {
 	Error    string  `json:"error"`
 }
 
+type JobSnapshot struct {
+	Status   string  `json:"status"`
+	Progress float64 `json:"progress"`
+	Speed    string  `json:"speed"`
+	Eta      string  `json:"eta"`
+	Title    string  `json:"title"`
+	Filename string  `json:"filename"`
+	Error    string  `json:"error"`
+}
+
 type downloadRequest struct {
 	URL     string `json:"url"`
 	Title   string `json:"title"`
@@ -714,10 +724,10 @@ func (s *server) getJob(jobID string) (*Job, bool) {
 	return j, ok
 }
 
-func copyJob(j *Job) Job {
+func copyJob(j *Job) JobSnapshot {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return Job{
+	return JobSnapshot{
 		Status:   j.Status,
 		Progress: j.Progress,
 		Speed:    j.Speed,
