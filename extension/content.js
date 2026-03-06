@@ -8,7 +8,8 @@ const state = {
   progressResetTimer: null,
   downloadLock: false,
   serverStatusTimer: null,
-  serverStatus: null
+  serverStatus: null,
+  apiToken: null
 }
 
 const selectors = [
@@ -217,6 +218,20 @@ async function pingServer() {
   }
 }
 
+function getApiToken() {
+  if (state.apiToken) return Promise.resolve(state.apiToken)
+  return new Promise(resolve => {
+    chrome.runtime.sendMessage({ action: 'getApiToken' }, response => {
+      if (chrome.runtime.lastError || !response || response.ok !== true || !response.token) {
+        resolve('')
+        return
+      }
+      state.apiToken = response.token
+      resolve(state.apiToken)
+    })
+  })
+}
+
 function pingServerViaBackground() {
   return new Promise(resolve => {
     chrome.runtime.sendMessage({ action: 'refreshHealth' }, response => {
@@ -327,12 +342,25 @@ async function onDownloadClick() {
 
   const format = state.panel.querySelector('[data-group="format"] button.active')?.dataset.value || 'mp4'
   const quality = state.panel.querySelector('[data-group="quality"] button.active')?.dataset.value || 'best'
+  const apiToken = await getApiToken()
+  if (!apiToken) {
+    status.textContent = 'Token API introuvable'
+    warning.textContent = 'Le token de sécurité est manquant. Rechargez l’extension YT Grabber.'
+    warning.hidden = false
+    fill.classList.add('error')
+    actionBtn.disabled = false
+    state.downloadLock = false
+    return
+  }
 
   let payload
   try {
     const resp = await fetch('http://localhost:9875/download', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-YTG-Token': apiToken
+      },
       body: JSON.stringify({
         url: location.href,
         title: getVideoTitle(),
@@ -356,7 +384,7 @@ async function onDownloadClick() {
   }
 
   status.textContent = 'Téléchargement en cours...'
-  const source = new EventSource(`http://localhost:9875/progress/${payload.job_id}`)
+  const source = new EventSource(`http://localhost:9875/progress/${payload.job_id}?token=${encodeURIComponent(apiToken)}`)
   state.source = source
 
   source.onmessage = event => {
@@ -389,7 +417,7 @@ async function onDownloadClick() {
       fill.classList.add('done')
       source.close()
       state.source = null
-      chrome.runtime.sendMessage({ action: 'download', jobId: payload.job_id })
+      chrome.runtime.sendMessage({ action: 'download', jobId: payload.job_id, token: apiToken })
       state.progressResetTimer = setTimeout(() => resetPanel(), 4000)
       state.downloadLock = false
       return

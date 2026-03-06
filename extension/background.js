@@ -1,5 +1,23 @@
 const SERVER_PING_URL = 'http://localhost:9875/ping'
 const STATUS_ALARM = 'ytg-server-health'
+const TOKEN_KEY = 'apiToken'
+const JOB_ID_RE = /^[a-f0-9]{16}$/i
+
+function randomHex(bytes = 32) {
+  const buf = new Uint8Array(bytes)
+  crypto.getRandomValues(buf)
+  return Array.from(buf, b => b.toString(16).padStart(2, '0')).join('')
+}
+
+async function getOrCreateApiToken() {
+  const stored = await chrome.storage.local.get(TOKEN_KEY)
+  const existing = typeof stored[TOKEN_KEY] === 'string' ? stored[TOKEN_KEY].trim() : ''
+  if (existing) return existing
+
+  const created = randomHex(32)
+  await chrome.storage.local.set({ [TOKEN_KEY]: created })
+  return created
+}
 
 async function checkServerHealth() {
   const controller = new AbortController()
@@ -37,11 +55,13 @@ async function ensureAlarm() {
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
+  await getOrCreateApiToken()
   await refreshActionStatus()
   await ensureAlarm()
 })
 
 chrome.runtime.onStartup.addListener(async () => {
+  await getOrCreateApiToken()
   await refreshActionStatus()
   await ensureAlarm()
 })
@@ -74,11 +94,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
 
+  if (message.action === 'getApiToken') {
+    getOrCreateApiToken().then(token => sendResponse({ ok: true, token }))
+    return true
+  }
+
   if (message.action !== 'download' || !message.jobId) return
+  if (!sender?.tab?.url?.startsWith('https://www.youtube.com/watch')) {
+    sendResponse({ ok: false, error: 'unauthorized sender context' })
+    return
+  }
+  if (!JOB_ID_RE.test(message.jobId)) {
+    sendResponse({ ok: false, error: 'invalid job id' })
+    return
+  }
+
+  const token = typeof message.token === 'string' ? message.token.trim() : ''
+  if (!token) {
+    sendResponse({ ok: false, error: 'missing api token' })
+    return
+  }
 
   chrome.downloads.download(
     {
-      url: `http://localhost:9875/file/${message.jobId}`,
+      url: `http://localhost:9875/file/${message.jobId}?token=${encodeURIComponent(token)}`,
       conflictAction: 'uniquify'
     },
     () => {

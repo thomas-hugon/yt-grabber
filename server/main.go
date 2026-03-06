@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/subtle"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -44,6 +45,7 @@ type downloadRequest struct {
 
 type server struct {
 	exeDir string
+	token  string
 	jobs   map[string]*Job
 	mu     sync.RWMutex
 }
@@ -64,8 +66,12 @@ func main() {
 	}
 	exeDir := filepath.Dir(exePath)
 	setupLogging(exeDir)
+	apiToken, err := loadAPIToken(exeDir)
+	if err != nil {
+		log.Printf("api token not loaded: %v", err)
+	}
 
-	s := &server{exeDir: exeDir, jobs: make(map[string]*Job)}
+	s := &server{exeDir: exeDir, token: apiToken, jobs: make(map[string]*Job)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ping", s.handlePing)
 	mux.HandleFunc("/download", s.handleDownload)
@@ -93,15 +99,33 @@ func setupLogging(exeDir string) {
 
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin != "" && isAllowedOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-YTG-Token")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 		if r.Method == http.MethodOptions {
+			if origin != "" && !isAllowedOrigin(origin) {
+				http.Error(w, "origin not allowed", http.StatusForbidden)
+				return
+			}
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isAllowedOrigin(origin string) bool {
+	if origin == "null" {
+		return true
+	}
+	if origin == "https://www.youtube.com" || origin == "https://m.youtube.com" {
+		return true
+	}
+	return strings.HasPrefix(origin, "chrome-extension://")
 }
 
 func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +138,33 @@ func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
 		"version": serverVersion(),
 		"commit":  serverCommit(),
 	})
+}
+
+func (s *server) requireAuth(w http.ResponseWriter, r *http.Request) bool {
+	if s.token == "" {
+		http.Error(w, "server token not configured", http.StatusServiceUnavailable)
+		return false
+	}
+
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin != "" && !isAllowedOrigin(origin) {
+		http.Error(w, "origin not allowed", http.StatusForbidden)
+		return false
+	}
+
+	provided := strings.TrimSpace(r.Header.Get("X-YTG-Token"))
+	if provided == "" {
+		provided = strings.TrimSpace(r.URL.Query().Get("token"))
+	}
+	if provided == "" {
+		http.Error(w, "missing token", http.StatusUnauthorized)
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(provided), []byte(s.token)) != 1 {
+		http.Error(w, "invalid token", http.StatusUnauthorized)
+		return false
+	}
+	return true
 }
 
 func shouldPrintVersion(args []string) bool {
@@ -148,9 +199,39 @@ func displayVersion() string {
 	return fmt.Sprintf("%s (%s)", serverVersion(), serverCommit())
 }
 
+func loadAPIToken(exeDir string) (string, error) {
+	if envToken := strings.TrimSpace(os.Getenv("YTG_API_TOKEN")); envToken != "" {
+		return envToken, nil
+	}
+
+	path := strings.TrimSpace(os.Getenv("YTG_API_TOKEN_FILE"))
+	if path == "" {
+		if runtime.GOOS == "windows" {
+			path = filepath.Join(exeDir, "ytgrabber.token")
+		} else if cfg, err := os.UserConfigDir(); err == nil {
+			path = filepath.Join(cfg, "ytgrabber", "token")
+		} else {
+			path = filepath.Join(exeDir, "ytgrabber.token")
+		}
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	token := strings.TrimSpace(string(b))
+	if token == "" {
+		return "", errors.New("token file is empty")
+	}
+	return token, nil
+}
+
 func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.requireAuth(w, r) {
 		return
 	}
 
@@ -195,6 +276,9 @@ func (s *server) handleProgress(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !s.requireAuth(w, r) {
+		return
+	}
 	jobID := strings.TrimPrefix(r.URL.Path, "/progress/")
 	if jobID == "" {
 		http.NotFound(w, r)
@@ -234,6 +318,9 @@ func (s *server) handleProgress(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.requireAuth(w, r) {
 		return
 	}
 	jobID := strings.TrimPrefix(r.URL.Path, "/file/")

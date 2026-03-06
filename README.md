@@ -29,6 +29,9 @@ By default it also ensures a local ffmpeg binary at `~/.local/bin/ffmpeg`.
 Optional Linux installer flags:
 
 ```bash
+# Use an extension-generated API token (recommended)
+./YTGrabber-linux-installer.sh --api-token <token> ./YTGrabber-Server-linux
+
 # Use an existing ffmpeg from a custom location
 ./YTGrabber-linux-installer.sh --ffmpeg-path /path/to/ffmpeg ./YTGrabber-Server-linux
 
@@ -44,6 +47,12 @@ Optional Linux installer flags:
 
 Then load the Chrome extension manually from the extracted extension folder.
 `--update` restarts/reloads the running service so the new binary is applied immediately.
+
+Windows token pairing:
+
+```powershell
+YTGrabber-Setup.exe /APITOKEN=<token>
+```
 
 ## Usage
 
@@ -67,6 +76,16 @@ Then load the Chrome extension manually from the extracted extension folder.
 Version semantics:
 - `version`: human-friendly release tag (example: `v2026.03.06-10`)
 - `commit`: exact git commit SHA for traceability
+
+## API Security Model
+
+- Protected endpoints (`/download`, `/progress/{id}`, `/file/{id}`) require a shared API token.
+- Extension includes this token in requests:
+  - `X-YTG-Token` header for `POST /download`
+  - `?token=...` query parameter for SSE/file URLs
+- Installer sets the server token:
+  - Linux: `--api-token` or `--api-token-file`
+  - Windows: `/APITOKEN=...`
 
 ## Updating yt-dlp
 

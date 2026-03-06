@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestShouldPrintVersion(t *testing.T) {
 	tests := []struct {
@@ -70,5 +74,54 @@ func TestDisplayVersion(t *testing.T) {
 	want := "v2026.03.06-10 (5fbeec16eb788b0deb4441a498978113a7c13e8a)"
 	if got := displayVersion(); got != want {
 		t.Fatalf("displayVersion() = %q, want %q", got, want)
+	}
+}
+
+func TestIsAllowedOrigin(t *testing.T) {
+	tests := []struct {
+		origin string
+		want   bool
+	}{
+		{origin: "https://www.youtube.com", want: true},
+		{origin: "https://m.youtube.com", want: true},
+		{origin: "chrome-extension://abcdef", want: true},
+		{origin: "https://evil.example.com", want: false},
+		{origin: "", want: false},
+	}
+
+	for _, tc := range tests {
+		if got := isAllowedOrigin(tc.origin); got != tc.want {
+			t.Fatalf("isAllowedOrigin(%q)=%v want %v", tc.origin, got, tc.want)
+		}
+	}
+}
+
+func TestRequireAuth(t *testing.T) {
+	s := &server{token: "secret-token"}
+
+	okReq := httptest.NewRequest(http.MethodPost, "http://localhost/download?token=secret-token", nil)
+	okReq.Header.Set("Origin", "https://www.youtube.com")
+	okRec := httptest.NewRecorder()
+	if !s.requireAuth(okRec, okReq) {
+		t.Fatalf("expected auth to pass")
+	}
+
+	missReq := httptest.NewRequest(http.MethodPost, "http://localhost/download", nil)
+	missRec := httptest.NewRecorder()
+	if s.requireAuth(missRec, missReq) {
+		t.Fatalf("expected auth to fail without token")
+	}
+	if missRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", missRec.Code)
+	}
+
+	badOriginReq := httptest.NewRequest(http.MethodPost, "http://localhost/download?token=secret-token", nil)
+	badOriginReq.Header.Set("Origin", "https://evil.example.com")
+	badOriginRec := httptest.NewRecorder()
+	if s.requireAuth(badOriginRec, badOriginReq) {
+		t.Fatalf("expected auth to fail for bad origin")
+	}
+	if badOriginRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", badOriginRec.Code)
 	}
 }

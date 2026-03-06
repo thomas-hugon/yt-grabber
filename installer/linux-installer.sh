@@ -4,6 +4,8 @@ set -euo pipefail
 DEST_BIN="$HOME/.local/bin/ytgrabber-server"
 YT_DLP_BIN="$HOME/.local/bin/yt-dlp"
 FFMPEG_BIN="$HOME/.local/bin/ffmpeg"
+TOKEN_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ytgrabber"
+TOKEN_FILE="$TOKEN_DIR/token"
 UNIT_DIR="$HOME/.config/systemd/user"
 UNIT_FILE="$UNIT_DIR/ytgrabber.service"
 START_LINE='pgrep -f "[y]tgrabber-server" >/dev/null || nohup "$HOME/.local/bin/ytgrabber-server" >/dev/null 2>&1 &'
@@ -14,6 +16,8 @@ MODE="install"
 SRC_BIN=""
 FFMPEG_CUSTOM_PATH=""
 DOWNLOAD_FFMPEG=0
+API_TOKEN=""
+API_TOKEN_FILE=""
 
 usage() {
   cat <<EOF
@@ -26,6 +30,8 @@ Options:
   --remove                Remove YT Grabber server, binaries, and autostart configuration
   --ffmpeg-path <path>    Use an existing ffmpeg binary from a custom path
   --download-ffmpeg       Download a local ffmpeg binary to $FFMPEG_BIN (x86_64 only)
+  --api-token <token>     Configure API token used by the local server
+  --api-token-file <path> Read API token from a file
   -h, --help              Show this help
 EOF
 }
@@ -57,6 +63,16 @@ parse_args() {
         DOWNLOAD_FFMPEG=1
         shift
         ;;
+      --api-token)
+        [[ $# -ge 2 ]] || fail "--api-token requires a value"
+        API_TOKEN="$2"
+        shift 2
+        ;;
+      --api-token-file)
+        [[ $# -ge 2 ]] || fail "--api-token-file requires a value"
+        API_TOKEN_FILE="$2"
+        shift 2
+        ;;
       -h|--help)
         usage
         exit 0
@@ -73,6 +89,50 @@ parse_args() {
         ;;
     esac
   done
+}
+
+generate_token() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+    return
+  fi
+  od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+resolve_api_token() {
+  if [[ -n "$API_TOKEN" && -n "$API_TOKEN_FILE" ]]; then
+    fail "Use either --api-token or --api-token-file, not both"
+  fi
+
+  if [[ -n "$API_TOKEN_FILE" ]]; then
+    [[ -f "$API_TOKEN_FILE" ]] || fail "Token file not found: $API_TOKEN_FILE"
+    API_TOKEN="$(tr -d '\r\n' < "$API_TOKEN_FILE")"
+  fi
+
+  API_TOKEN="$(printf '%s' "$API_TOKEN" | tr -d '\r\n' | xargs)"
+  if [[ -z "$API_TOKEN" ]]; then
+    API_TOKEN="$(generate_token)"
+  fi
+}
+
+write_api_token_file() {
+  mkdir -p "$TOKEN_DIR"
+  umask 077
+  printf '%s\n' "$API_TOKEN" > "$TOKEN_FILE"
+  chmod 600 "$TOKEN_FILE"
+}
+
+sha256_of() {
+  local p="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$p" | awk '{print $1}'
+    return
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$p" | awk '{print $1}'
+    return
+  fi
+  fail "No SHA256 tool found (need sha256sum or shasum)"
 }
 
 remove_start_line_if_present() {
@@ -96,7 +156,8 @@ remove_installation() {
   remove_start_line_if_present "$BASHRC"
   remove_start_line_if_present "$PROFILE"
 
-  rm -f "$DEST_BIN" "$YT_DLP_BIN" "$FFMPEG_BIN"
+  rm -f "$DEST_BIN" "$YT_DLP_BIN" "$FFMPEG_BIN" "$TOKEN_FILE"
+  rmdir "$TOKEN_DIR" >/dev/null 2>&1 || true
 
   echo "YT Grabber removed from this user account."
 }
@@ -120,6 +181,12 @@ download_ffmpeg_local() {
 
   echo "Downloading ffmpeg..."
   curl -fsSL "$url" -o "$tmpdir/ffmpeg.tar.xz"
+  curl -fsSL "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/checksums.sha256" -o "$tmpdir/checksums.sha256"
+  local expected actual
+  expected="$(awk '/ffmpeg-master-latest-linux64-gpl.tar.xz$/ {print $1; exit}' "$tmpdir/checksums.sha256" | tr '[:upper:]' '[:lower:]')"
+  [[ -n "$expected" ]] || fail "Failed to resolve ffmpeg checksum from checksums.sha256"
+  actual="$(sha256_of "$tmpdir/ffmpeg.tar.xz" | tr '[:upper:]' '[:lower:]')"
+  [[ "$expected" == "$actual" ]] || fail "ffmpeg archive checksum mismatch"
   tar -xJf "$tmpdir/ffmpeg.tar.xz" -C "$tmpdir"
 
   local found
@@ -181,9 +248,16 @@ install_or_update() {
 
   echo "Downloading yt-dlp..."
   curl -fsSL "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" -o "$YT_DLP_BIN"
+  local yt_expected yt_actual
+  yt_expected="$(curl -fsSL "https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS" | awk '/ yt-dlp$/ {print $1; exit}' | tr '[:upper:]' '[:lower:]')"
+  [[ -n "$yt_expected" ]] || fail "Failed to resolve yt-dlp checksum"
+  yt_actual="$(sha256_of "$YT_DLP_BIN" | tr '[:upper:]' '[:lower:]')"
+  [[ "$yt_expected" == "$yt_actual" ]] || fail "yt-dlp checksum mismatch"
   chmod +x "$YT_DLP_BIN"
 
   resolve_ffmpeg
+  resolve_api_token
+  write_api_token_file
 
   if command -v systemctl >/dev/null 2>&1 && systemctl --user --version >/dev/null 2>&1; then
     mkdir -p "$UNIT_DIR"
@@ -255,6 +329,8 @@ if [[ "$MODE" == "remove" ]]; then
   [[ -z "$SRC_BIN" ]] || fail "--remove does not accept a server binary path"
   [[ -z "$FFMPEG_CUSTOM_PATH" ]] || fail "--remove cannot be combined with --ffmpeg-path"
   [[ "$DOWNLOAD_FFMPEG" -eq 0 ]] || fail "--remove cannot be combined with --download-ffmpeg"
+  [[ -z "$API_TOKEN" ]] || fail "--remove cannot be combined with --api-token"
+  [[ -z "$API_TOKEN_FILE" ]] || fail "--remove cannot be combined with --api-token-file"
   remove_installation
   exit 0
 fi

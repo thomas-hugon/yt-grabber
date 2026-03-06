@@ -109,6 +109,53 @@
       display: block;
     }
 
+    .token {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      display: none;
+    }
+
+    .token.show {
+      display: block;
+    }
+
+    .pairing {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      display: none;
+      line-height: 1.35;
+    }
+
+    .pairing.show {
+      display: block;
+    }
+
+    .pairing a {
+      color: #8fb5ff;
+      text-decoration: none;
+    }
+
+    .pairing a:hover {
+      text-decoration: underline;
+    }
+
+    #copyTokenBtn {
+      margin-left: 8px;
+      border: 1px solid #3b4257;
+      border-radius: 6px;
+      background: #1b2030;
+      color: var(--text);
+      font: 600 11px 'Segoe UI', system-ui, sans-serif;
+      padding: 3px 8px;
+      cursor: pointer;
+    }
+
+    #copyTokenBtn:hover {
+      background: #22283a;
+    }
+
     .actions {
       margin-top: 10px;
       display: flex;
@@ -148,6 +195,11 @@
     <div class="row"><span class="dot" id="dot"></span><span id="label">Vérification du serveur...</span></div>
     <div class="hint" id="hint"></div>
     <div class="version" id="version"></div>
+    <div class="token" id="tokenLine">Token API: <span id="tokenValue"></span><button id="copyTokenBtn" type="button">Copier</button></div>
+    <div class="pairing" id="pairingInfo">
+      Installer: Linux `--api-token`, Windows `/APITOKEN`.
+      <a id="releaseLink" href="https://github.com/thomas-hugon/yt-grabber/releases/latest" target="_blank" rel="noopener noreferrer">Release</a>
+    </div>
     <div class="actions">
       <button id="retryBtn" type="button">Re-tester</button>
     </div>
