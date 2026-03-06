@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "YT Grabber",
+  "version": "1.0",
+  "description": "Télécharge les vidéos YouTube via yt-dlp (serveur local)",
+  "permissions": ["downloads", "storage"],
+  "host_permissions": [
+    "https://www.youtube.com/*",
+    "http://localhost:9875/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [{
+    "matches": ["https://www.youtube.com/watch*"],
+    "js": ["content.js"],
+    "css": ["content.css"],
+    "run_at": "document_idle"
+  }],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

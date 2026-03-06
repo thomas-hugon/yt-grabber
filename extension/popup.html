@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>YT Grabber</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101115;
+      --panel: #161821;
+      --text: #e7e9ef;
+      --muted: #a8adbc;
+      --gold: #f0a500;
+      --ok: #46d47d;
+      --err: #ef4d5f;
+    }
+
+    body {
+      margin: 0;
+      width: 240px;
+      background: radial-gradient(circle at top right, #1a2030 0, #101115 45%);
+      color: var(--text);
+      font: 13px 'Segoe UI', system-ui, sans-serif;
+      padding: 14px;
+    }
+
+    .head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .logo {
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+      background: var(--gold);
+      display: grid;
+      place-items: center;
+      color: #111;
+      box-shadow: 0 10px 24px rgba(240, 165, 0, 0.3);
+    }
+
+    .logo svg {
+      width: 18px;
+      height: 18px;
+      fill: currentColor;
+    }
+
+    .title {
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .status {
+      border: 1px solid #2b2e3a;
+      border-radius: 10px;
+      background: var(--panel);
+      padding: 10px;
+      line-height: 1.35;
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 0 0 rgba(70, 212, 125, 0.5);
+      animation: pulse 1.6s infinite;
+      flex: 0 0 auto;
+    }
+
+    .dot.err {
+      background: var(--err);
+      box-shadow: none;
+      animation: none;
+    }
+
+    .hint {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      display: none;
+    }
+
+    .hint.show {
+      display: block;
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(70, 212, 125, 0.5); }
+      70% { box-shadow: 0 0 0 7px rgba(70, 212, 125, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(70, 212, 125, 0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="head">
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M11 2h2v9h3l-4 5-4-5h3V2zm-6 17h14v2H5z"/></svg>
+    </div>
+    <div class="title">YT Grabber</div>
+  </div>
+
+  <div class="status" id="statusBox">
+    <div class="row"><span class="dot" id="dot"></span><span id="label">Vérification du serveur...</span></div>
+    <div class="hint" id="hint"></div>
+  </div>
+
+  <script>
+    const dot = document.getElementById('dot')
+    const label = document.getElementById('label')
+    const hint = document.getElementById('hint')
+
+    const setState = ok => {
+      if (ok) {
+        dot.classList.remove('err')
+        label.textContent = 'Serveur actif — localhost:9875'
+        hint.classList.remove('show')
+        return
+      }
+
+      dot.classList.add('err')
+      label.textContent = 'Serveur introuvable'
+      hint.textContent = 'Windows: lancez YTGrabber-Server.exe. Linux: systemctl --user start ytgrabber.'
+      hint.classList.add('show')
+    }
+
+    fetch('http://localhost:9875/ping', { signal: AbortSignal.timeout(3000) })
+      .then(r => setState(r.ok))
+      .catch(() => setState(false))
+  </script>
+</body>
+</html>

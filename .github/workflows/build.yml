@@ -1,0 +1,167 @@
+name: build-and-release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-server-windows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Build Windows server
+        run: |
+          cd server
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+            go build -ldflags="-s -w -H=windowsgui" \
+            -o ../YTGrabber-Server.exe .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-windows
+          path: YTGrabber-Server.exe
+
+  build-server-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Build Linux server
+        run: |
+          cd server
+          CGO_ENABLED=0 go build -ldflags="-s -w" -o ../YTGrabber-Server-linux .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-linux
+          path: YTGrabber-Server-linux
+
+  build-server-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Build macOS arm64 server
+        run: |
+          cd server
+          GOARCH=arm64 go build -ldflags="-s -w" -o ../YTGrabber-Server-mac-arm64 .
+      - name: Build macOS amd64 server
+        run: |
+          cd server
+          GOARCH=amd64 go build -ldflags="-s -w" -o ../YTGrabber-Server-mac-amd64 .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-mac
+          path: |
+            YTGrabber-Server-mac-arm64
+            YTGrabber-Server-mac-amd64
+
+  build-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zip extension
+        run: |
+          cd extension
+          zip -r ../YTGrabber-extension.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-zip
+          path: YTGrabber-extension.zip
+
+  build-linux-installer:
+    runs-on: ubuntu-latest
+    needs: build-server-linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: server-linux
+      - name: Bundle Linux installer
+        run: |
+          chmod +x installer/linux-installer.sh
+          mkdir -p dist
+          cp YTGrabber-Server-linux dist/
+          cp installer/linux-installer.sh dist/YTGrabber-linux-installer.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-installer
+          path: dist/*
+
+  build-windows-installer:
+    runs-on: windows-latest
+    needs: build-server-windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: server-windows
+          path: .
+      - name: Install Inno Setup
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri "https://jrsoftware.org/download.php/is.exe" -OutFile is.exe -UseBasicParsing
+          Start-Process -FilePath is.exe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait
+      - name: Build installer
+        shell: powershell
+        run: |
+          mkdir -Force dist
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\setup.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/YTGrabber-Setup.exe
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs:
+      - build-server-windows
+      - build-server-linux
+      - build-server-mac
+      - build-extension
+      - build-linux-installer
+      - build-windows-installer
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+      - name: Release date
+        run: echo "DATE=$(date +'%Y.%m.%d')" >> "$GITHUB_ENV"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.DATE }}-${{ github.run_number }}
+          name: YT Grabber v${{ env.DATE }}
+          body: |
+            ## Windows
+            Téléchargez et lancez **YTGrabber-Setup.exe**, puis suivez le guide pour charger l'extension Chrome.
+
+            ## Linux
+            Téléchargez **YTGrabber-Server-linux** et **YTGrabber-linux-installer.sh**, puis :
+            ```bash
+            chmod +x YTGrabber-linux-installer.sh
+            ./YTGrabber-linux-installer.sh ./YTGrabber-Server-linux
+            ```
+            Le serveur sera installé comme service systemd. Chargez ensuite l'extension depuis le zip.
+
+            ## Extension Chrome (toutes plateformes)
+            Téléchargez **YTGrabber-extension.zip**, décompressez-le, puis chargez le dossier via `chrome://extensions` en mode développeur.
+          files: |
+            windows-installer/YTGrabber-Setup.exe
+            linux-installer/YTGrabber-Server-linux
+            linux-installer/YTGrabber-linux-installer.sh
+            server-windows/YTGrabber-Server.exe
+            server-mac/YTGrabber-Server-mac-arm64
+            server-mac/YTGrabber-Server-mac-amd64
+            extension-zip/YTGrabber-extension.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

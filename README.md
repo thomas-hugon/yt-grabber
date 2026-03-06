@@ -1,0 +1,79 @@
+# YT Grabber
+
+YT Grabber is a local download stack for YouTube and other `yt-dlp`-supported sites. It ships as:
+
+- a Chrome extension (Manifest V3) that adds a **Télécharger** button on YouTube watch pages
+- a local Go server on `http://localhost:9875` that runs `yt-dlp` and streams progress over SSE
+
+## Windows
+
+1. Download `YTGrabber-Setup.exe` from the GitHub Releases page.
+2. Run the installer.
+3. At the end of setup, follow the included Chrome extension guide.
+
+The installer deploys `YTGrabber-Server.exe`, downloads `yt-dlp.exe` and `ffmpeg.exe`, creates a Task Scheduler entry for auto-start, and launches the server.
+
+## Linux
+
+1. Download `YTGrabber-Server-linux` and `YTGrabber-linux-installer.sh` from GitHub Releases.
+2. Run:
+
+```bash
+chmod +x YTGrabber-linux-installer.sh
+./YTGrabber-linux-installer.sh ./YTGrabber-Server-linux
+```
+
+This installs the server under `~/.local/bin`, installs `yt-dlp`, configures a systemd user service when available, and starts it.
+
+Then load the Chrome extension manually from the extracted extension folder.
+
+## Usage
+
+1. Open a YouTube watch page.
+2. Click **Télécharger**.
+3. Choose format/quality and start.
+4. The extension tracks progress, then hands off the file to Chrome downloads.
+
+## Updating yt-dlp
+
+- Windows: re-run the installer or replace `yt-dlp.exe` in the install folder.
+- Linux:
+
+```bash
+wget -O ~/.local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
+chmod +x ~/.local/bin/yt-dlp
+```
+
+## Build From Source
+
+Requirements:
+
+- Go 1.22+
+- Inno Setup 6 (for `YTGrabber-Setup.exe`)
+- Docker (optional for reproducible local builds)
+
+Build server:
+
+```bash
+cd server
+CGO_ENABLED=0 go build -o ../YTGrabber-Server-linux .
+```
+
+Build extension zip:
+
+```bash
+cd extension
+zip -r ../YTGrabber-extension.zip .
+```
+
+Build Windows installer on Windows:
+
+```powershell
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\setup.iss
+```
+
+## Supported Sites
+
+`yt-dlp` supports many sites beyond YouTube. See the upstream project for details:
+
+- https://github.com/yt-dlp/yt-dlp

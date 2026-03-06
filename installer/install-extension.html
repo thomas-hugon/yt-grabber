@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Guide extension YT Grabber</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0e0f13;
+      --panel: #141722;
+      --text: #ebedf3;
+      --muted: #a2a9b8;
+      --gold: #f0a500;
+      --ok: #42cf79;
+      --err: #f04e61;
+      --line: #2a2e3d;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font: 15px 'Segoe UI', system-ui, sans-serif;
+      background: radial-gradient(circle at 20% 10%, #1b2238 0, #0e0f13 45%);
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    .card {
+      width: min(720px, 100%);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 24px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+    }
+
+    .head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: var(--gold);
+      color: #111;
+      display: grid;
+      place-items: center;
+    }
+
+    .logo svg {
+      width: 20px;
+      height: 20px;
+      fill: currentColor;
+    }
+
+    .title {
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 12px;
+      margin-bottom: 20px;
+      font-weight: 600;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--ok);
+    }
+
+    .dot.err {
+      background: var(--err);
+    }
+
+    ol {
+      margin: 0;
+      padding-left: 22px;
+    }
+
+    li {
+      margin-bottom: 14px;
+      line-height: 1.45;
+    }
+
+    .copy {
+      margin-left: 10px;
+      border: 0;
+      border-radius: 8px;
+      background: #22273a;
+      color: var(--text);
+      height: 30px;
+      padding: 0 12px;
+      cursor: pointer;
+    }
+
+    .path {
+      margin-top: 8px;
+      border: 1px dashed #404863;
+      border-radius: 8px;
+      background: #111320;
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #f6f7fb;
+      word-break: break-all;
+    }
+
+    footer {
+      margin-top: 20px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    strong {
+      color: var(--gold);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="head">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M11 2h2v9h3l-4 5-4-5h3V2zm-6 17h14v2H5z"/></svg>
+      </div>
+      <div class="title">YT Grabber</div>
+    </div>
+
+    <div class="status"><span class="dot" id="dot"></span><span id="status-text">Vérification du serveur local...</span></div>
+
+    <ol>
+      <li>
+        Ouvrez <code>chrome://extensions</code>
+        <button class="copy" data-copy="chrome://extensions">Copier</button>
+      </li>
+      <li>Activez le Mode développeur (interrupteur en haut à droite).</li>
+      <li>
+        Cliquez "Charger l'extension non empaquetée" puis sélectionnez ce dossier :
+        <div class="path">
+          <span id="extension-path"></span>
+          <button class="copy" id="copy-path">Copier</button>
+        </div>
+      </li>
+    </ol>
+
+    <footer>Le bouton <strong>Télécharger</strong> apparaîtra sur toutes les pages YouTube.</footer>
+  </div>
+
+  <script>
+    const dot = document.getElementById('dot')
+    const statusText = document.getElementById('status-text')
+    const extensionPath = document.getElementById('extension-path')
+
+    const windowsPath = (() => {
+      const p = decodeURIComponent(window.location.pathname || '')
+      const normalized = p.replace(/^\//, '').replace(/\//g, '\\\\')
+      return normalized.replace(/install-extension\.html$/i, 'extension')
+    })()
+
+    const fallbackLinux = '~/.local/share/ytgrabber/extension'
+    const isWindows = navigator.userAgent.includes('Windows') || /^[A-Za-z]:\\/.test(windowsPath)
+    extensionPath.textContent = isWindows ? windowsPath : fallbackLinux
+
+    const copy = value => navigator.clipboard.writeText(value).catch(() => {})
+
+    document.querySelectorAll('[data-copy]').forEach(btn => {
+      btn.addEventListener('click', () => copy(btn.dataset.copy))
+    })
+
+    document.getElementById('copy-path').addEventListener('click', () => copy(extensionPath.textContent))
+
+    fetch('http://localhost:9875/ping', { signal: AbortSignal.timeout(3000) })
+      .then(r => {
+        if (!r.ok) throw new Error()
+        dot.classList.remove('err')
+        statusText.textContent = 'Serveur actif sur localhost:9875'
+      })
+      .catch(() => {
+        dot.classList.add('err')
+        statusText.textContent = 'Serveur local introuvable. Lancez YT Grabber puis revenez ici.'
+      })
+  </script>
+</body>
+</html>
