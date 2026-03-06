@@ -202,7 +202,12 @@ WantedBy=default.target
 UNIT
 
     systemctl --user daemon-reload
-    systemctl --user enable --now ytgrabber
+    systemctl --user enable ytgrabber >/dev/null 2>&1 || true
+    if [[ "$MODE" == "update" ]]; then
+      systemctl --user restart ytgrabber
+    else
+      systemctl --user start ytgrabber
+    fi
 
     echo
     if [[ "$MODE" == "update" ]]; then
@@ -224,6 +229,10 @@ UNIT
     grep -F "$START_LINE" "$PROFILE" >/dev/null 2>&1 || echo "$START_LINE" >> "$PROFILE"
   fi
 
+  if [[ "$MODE" == "update" ]]; then
+    pkill -f '[y]tgrabber-server' >/dev/null 2>&1 || true
+    sleep 0.2
+  fi
   nohup "$DEST_BIN" >/dev/null 2>&1 &
 
   echo

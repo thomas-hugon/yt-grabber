@@ -43,6 +43,7 @@ Optional Linux installer flags:
 ```
 
 Then load the Chrome extension manually from the extracted extension folder.
+`--update` restarts/reloads the running service so the new binary is applied immediately.
 
 ## Usage
 
@@ -50,6 +51,7 @@ Then load the Chrome extension manually from the extracted extension folder.
 2. Click **Télécharger**.
 3. Choose format/quality and start.
 4. The extension tracks progress, then hands off the file to Chrome downloads.
+5. You can open the extension popup to check server health and view the running server version.
 
 ## Server Version
 

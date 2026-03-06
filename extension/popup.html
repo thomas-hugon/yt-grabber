@@ -96,6 +96,19 @@
       display: block;
     }
 
+    .version {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+      display: none;
+      word-break: break-word;
+    }
+
+    .version.show {
+      display: block;
+    }
+
     .actions {
       margin-top: 10px;
       display: flex;
@@ -134,6 +147,7 @@
   <div class="status" id="statusBox">
     <div class="row"><span class="dot" id="dot"></span><span id="label">Vérification du serveur...</span></div>
     <div class="hint" id="hint"></div>
+    <div class="version" id="version"></div>
     <div class="actions">
       <button id="retryBtn" type="button">Re-tester</button>
     </div>
