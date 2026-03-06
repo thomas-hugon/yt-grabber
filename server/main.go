@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -626,17 +627,64 @@ func findOutputFile(dir string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
+
+	type candidate struct {
+		path    string
+		name    string
+		modTime time.Time
+		size    int64
+	}
+	candidates := make([]candidate, 0, len(entries))
+
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
 		name := e.Name()
-		if strings.HasSuffix(name, ".part") {
+		if !isLikelyMediaOutput(name) {
 			continue
 		}
-		return filepath.Join(dir, name), name, nil
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		candidates = append(candidates, candidate{
+			path:    filepath.Join(dir, name),
+			name:    name,
+			modTime: info.ModTime(),
+			size:    info.Size(),
+		})
 	}
-	return "", "", errors.New("no output file")
+
+	if len(candidates) == 0 {
+		return "", "", errors.New("no output file")
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].modTime.Equal(candidates[j].modTime) {
+			if candidates[i].size == candidates[j].size {
+				return candidates[i].name < candidates[j].name
+			}
+			return candidates[i].size > candidates[j].size
+		}
+		return candidates[i].modTime.After(candidates[j].modTime)
+	})
+
+	return candidates[0].path, candidates[0].name, nil
+}
+
+func isLikelyMediaOutput(name string) bool {
+	lower := strings.ToLower(name)
+	if strings.HasSuffix(lower, ".part") {
+		return false
+	}
+
+	ext := filepath.Ext(lower)
+	switch ext {
+	case ".json", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".vtt", ".srt", ".sbv", ".ass", ".lrc", ".txt", ".description":
+		return false
+	}
+	return true
 }
 
 func (s *server) failJob(jobID string, j *Job, msg string) {

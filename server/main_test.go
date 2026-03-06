@@ -3,7 +3,10 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestShouldPrintVersion(t *testing.T) {
@@ -123,5 +126,57 @@ func TestRequireAuth(t *testing.T) {
 	}
 	if badOriginRec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", badOriginRec.Code)
+	}
+}
+
+func TestFindOutputFileIgnoresSidecarFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	writeTestFile(t, filepath.Join(dir, "video.info.json"), "meta")
+	writeTestFile(t, filepath.Join(dir, "video.jpg"), "thumb")
+	writeTestFile(t, filepath.Join(dir, "video.part"), "partial")
+	writeTestFile(t, filepath.Join(dir, "video.mp4"), "binary-media")
+
+	path, name, err := findOutputFile(dir)
+	if err != nil {
+		t.Fatalf("findOutputFile returned error: %v", err)
+	}
+	if name != "video.mp4" {
+		t.Fatalf("findOutputFile picked %q, want video.mp4", name)
+	}
+	if path != filepath.Join(dir, "video.mp4") {
+		t.Fatalf("findOutputFile path = %q, want %q", path, filepath.Join(dir, "video.mp4"))
+	}
+}
+
+func TestFindOutputFilePrefersMostRecentMedia(t *testing.T) {
+	dir := t.TempDir()
+
+	oldPath := filepath.Join(dir, "old.mp4")
+	newPath := filepath.Join(dir, "new.mp3")
+	writeTestFile(t, oldPath, "old-media")
+	writeTestFile(t, newPath, "new-media")
+
+	oldTime := time.Now().Add(-2 * time.Minute)
+	if err := os.Chtimes(oldPath, oldTime, oldTime); err != nil {
+		t.Fatalf("os.Chtimes(old) error: %v", err)
+	}
+
+	path, name, err := findOutputFile(dir)
+	if err != nil {
+		t.Fatalf("findOutputFile returned error: %v", err)
+	}
+	if name != "new.mp3" {
+		t.Fatalf("findOutputFile picked %q, want new.mp3", name)
+	}
+	if path != newPath {
+		t.Fatalf("findOutputFile path = %q, want %q", path, newPath)
+	}
+}
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(%q) error: %v", path, err)
 	}
 }
