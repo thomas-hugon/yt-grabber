@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  SERVER_VERSION: ${{ github.sha }}
+
 jobs:
   build-server-windows:
     runs-on: ubuntu-latest
@@ -17,7 +20,7 @@ jobs:
         run: |
           cd server
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
-            go build -ldflags="-s -w -H=windowsgui" \
+            go build -ldflags="-s -w -H=windowsgui -X main.version=${SERVER_VERSION}" \
             -o ../YTGrabber-Server.exe .
       - uses: actions/upload-artifact@v4
         with:
@@ -34,7 +37,7 @@ jobs:
       - name: Build Linux server
         run: |
           cd server
-          CGO_ENABLED=0 go build -ldflags="-s -w" -o ../YTGrabber-Server-linux .
+          CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${SERVER_VERSION}" -o ../YTGrabber-Server-linux .
       - uses: actions/upload-artifact@v4
         with:
           name: server-linux
@@ -50,11 +53,11 @@ jobs:
       - name: Build macOS arm64 server
         run: |
           cd server
-          GOARCH=arm64 go build -ldflags="-s -w" -o ../YTGrabber-Server-mac-arm64 .
+          GOARCH=arm64 go build -ldflags="-s -w -X main.version=${SERVER_VERSION}" -o ../YTGrabber-Server-mac-arm64 .
       - name: Build macOS amd64 server
         run: |
           cd server
-          GOARCH=amd64 go build -ldflags="-s -w" -o ../YTGrabber-Server-mac-amd64 .
+          GOARCH=amd64 go build -ldflags="-s -w -X main.version=${SERVER_VERSION}" -o ../YTGrabber-Server-mac-amd64 .
       - uses: actions/upload-artifact@v4
         with:
           name: server-mac

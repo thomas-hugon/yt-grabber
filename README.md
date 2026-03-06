@@ -51,6 +51,17 @@ Then load the Chrome extension manually from the extracted extension folder.
 3. Choose format/quality and start.
 4. The extension tracks progress, then hands off the file to Chrome downloads.
 
+## Server Version
+
+- CLI:
+
+```bash
+~/.local/bin/ytgrabber-server --version
+```
+
+- API:
+  `GET http://localhost:9875/ping` returns `{"status":"ok","version":"<build-version>"}`.
+
 ## Updating yt-dlp
 
 - Windows: re-run the installer or replace `yt-dlp.exe` in the install folder.

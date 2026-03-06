@@ -49,8 +49,14 @@ type server struct {
 }
 
 var progressRe = regexp.MustCompile(`\[download\]\s+([0-9.]+)%.*?at\s+([^\s]+).*?ETA\s+([0-9:]+)`)
+var version = "dev"
 
 func main() {
+	if shouldPrintVersion(os.Args[1:]) {
+		fmt.Println(serverVersion())
+		return
+	}
+
 	exePath, err := os.Executable()
 	if err != nil {
 		log.Fatalf("resolve executable: %v", err)
@@ -102,7 +108,27 @@ func (s *server) handlePing(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": "1.0"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": serverVersion()})
+}
+
+func shouldPrintVersion(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "--version", "-version", "version", "-v":
+		return true
+	default:
+		return false
+	}
+}
+
+func serverVersion() string {
+	v := strings.TrimSpace(version)
+	if v == "" {
+		return "dev"
+	}
+	return v
 }
 
 func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
