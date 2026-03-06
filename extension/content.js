@@ -202,11 +202,15 @@ function mountSegment(root, options, activeValue, onChange) {
 }
 
 async function pingServer() {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 3000)
   try {
-    const pong = await fetch('http://localhost:9875/ping', { signal: AbortSignal.timeout(3000) })
+    const pong = await fetch('http://localhost:9875/ping', { signal: controller.signal })
     return pong.ok
   } catch {
     return false
+  } finally {
+    clearTimeout(timer)
   }
 }
 
