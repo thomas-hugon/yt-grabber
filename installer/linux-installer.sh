@@ -4,9 +4,12 @@ set -euo pipefail
 DEST_BIN="$HOME/.local/bin/ytgrabber-server"
 YT_DLP_BIN="$HOME/.local/bin/yt-dlp"
 FFMPEG_BIN="$HOME/.local/bin/ffmpeg"
+JS_RUNTIME_BIN="$HOME/.local/bin/ytg-nodejs"
 LOG_FILE="$HOME/.local/bin/ytgrabber.log"
 TOKEN_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ytgrabber"
 TOKEN_FILE="$TOKEN_DIR/token"
+YTDLP_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/yt-dlp"
+YTDLP_CONFIG_FILE="$YTDLP_CONFIG_DIR/config"
 UNIT_DIR="$HOME/.config/systemd/user"
 UNIT_FILE="$UNIT_DIR/ytgrabber.service"
 START_LINE='pgrep -f "[y]tgrabber-server" >/dev/null || nohup "$HOME/.local/bin/ytgrabber-server" >/dev/null 2>&1 &'
@@ -19,6 +22,8 @@ FFMPEG_CUSTOM_PATH=""
 DOWNLOAD_FFMPEG=0
 API_TOKEN=""
 API_TOKEN_FILE=""
+JS_RUNTIME_PATH=""
+DOWNLOAD_NODEJS=0
 
 usage() {
   cat <<EOF
@@ -31,6 +36,9 @@ Options:
   --remove                Remove YT Grabber server, binaries, and autostart configuration
   --ffmpeg-path <path>    Use an existing ffmpeg binary from a custom path
   --download-ffmpeg       Download a local ffmpeg binary to $FFMPEG_BIN (x86_64 only)
+  --js-runtime-path <path>
+                          Use an existing Node.js runtime binary and install it to $JS_RUNTIME_BIN
+  --download-nodejs       Download local Node.js runtime to $JS_RUNTIME_BIN (x86_64/arm64)
   --api-token <token>     Configure API token used by the local server
   --api-token-file <path> Read API token from a file
   -h, --help              Show this help
@@ -62,6 +70,15 @@ parse_args() {
         ;;
       --download-ffmpeg)
         DOWNLOAD_FFMPEG=1
+        shift
+        ;;
+      --js-runtime-path)
+        [[ $# -ge 2 ]] || fail "--js-runtime-path requires a value"
+        JS_RUNTIME_PATH="$2"
+        shift 2
+        ;;
+      --download-nodejs)
+        DOWNLOAD_NODEJS=1
         shift
         ;;
       --api-token)
@@ -162,7 +179,14 @@ remove_installation() {
   remove_start_line_if_present "$BASHRC"
   remove_start_line_if_present "$PROFILE"
 
-  rm -f "$DEST_BIN" "$YT_DLP_BIN" "$FFMPEG_BIN" "$LOG_FILE" "$TOKEN_FILE"
+  rm -f "$DEST_BIN" "$YT_DLP_BIN" "$FFMPEG_BIN" "$JS_RUNTIME_BIN" "$LOG_FILE" "$TOKEN_FILE"
+  if [[ -f "$YTDLP_CONFIG_FILE" ]]; then
+    sed -i '/# BEGIN YTGRABBER JS RUNTIME/,/# END YTGRABBER JS RUNTIME/d' "$YTDLP_CONFIG_FILE" || true
+    if [[ ! -s "$YTDLP_CONFIG_FILE" ]]; then
+      rm -f "$YTDLP_CONFIG_FILE"
+    fi
+  fi
+  rmdir "$YTDLP_CONFIG_DIR" >/dev/null 2>&1 || true
   rmdir "$TOKEN_DIR" >/dev/null 2>&1 || true
   rmdir "$UNIT_DIR" >/dev/null 2>&1 || true
 
@@ -246,6 +270,94 @@ MSG
   exit 1
 }
 
+download_nodejs_local() {
+  local arch
+  arch="$(uname -m)"
+  local node_arch=""
+  case "$arch" in
+    x86_64|amd64) node_arch="x64" ;;
+    aarch64|arm64) node_arch="arm64" ;;
+    *) fail "Unsupported architecture for --download-nodejs: $arch. Use --js-runtime-path instead." ;;
+  esac
+
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  local version index_url tar_name url
+  index_url="https://nodejs.org/dist/latest-v22.x/"
+  version="$(curl -fsSL "$index_url" | sed -n 's/.*href="node-\(v22\.[0-9.]*\)-linux-'"$node_arch"'\.tar\.xz".*/\1/p' | head -n1)"
+  [[ -n "$version" ]] || {
+    rm -rf "$tmpdir"
+    fail "Failed to resolve latest Node.js v22 release for linux-$node_arch"
+  }
+  tar_name="node-${version}-linux-${node_arch}.tar.xz"
+  url="https://nodejs.org/dist/${version}/${tar_name}"
+
+  echo "Downloading Node.js runtime..."
+  curl -fsSL "$url" -o "$tmpdir/node.tar.xz"
+  tar -xJf "$tmpdir/node.tar.xz" -C "$tmpdir"
+
+  local found
+  found="$(find "$tmpdir" -type f -path "*/bin/node" | head -n1)"
+  [[ -n "$found" ]] || {
+    rm -rf "$tmpdir"
+    fail "Failed to find Node.js binary in downloaded archive"
+  }
+
+  install -m 0755 "$found" "$JS_RUNTIME_BIN"
+  rm -rf "$tmpdir"
+  echo "Installed Node.js runtime to $JS_RUNTIME_BIN"
+}
+
+resolve_js_runtime() {
+  if [[ -n "$JS_RUNTIME_PATH" ]]; then
+    [[ -f "$JS_RUNTIME_PATH" ]] || fail "JS runtime path not found: $JS_RUNTIME_PATH"
+    [[ -x "$JS_RUNTIME_PATH" ]] || fail "JS runtime path is not executable: $JS_RUNTIME_PATH"
+    install -m 0755 "$JS_RUNTIME_PATH" "$JS_RUNTIME_BIN"
+    echo "Installed custom JS runtime to $JS_RUNTIME_BIN"
+    return
+  fi
+
+  if [[ "$DOWNLOAD_NODEJS" -eq 1 ]]; then
+    download_nodejs_local
+    return
+  fi
+
+  if [[ -x "$JS_RUNTIME_BIN" ]]; then
+    echo "Using existing local JS runtime at $JS_RUNTIME_BIN"
+    return
+  fi
+
+  if command -v node >/dev/null 2>&1; then
+    install -m 0755 "$(command -v node)" "$JS_RUNTIME_BIN"
+    echo "Copied Node.js from PATH to $JS_RUNTIME_BIN"
+    return
+  fi
+
+  cat <<MSG
+No JavaScript runtime configured for yt-dlp YouTube extraction.
+Choose one of:
+  1) Install Node.js with your package manager
+  2) Re-run with --js-runtime-path /path/to/node
+  3) Re-run with --download-nodejs
+Continuing without JS runtime (yt-dlp may miss some formats).
+MSG
+}
+
+configure_ytdlp_js_runtime() {
+  mkdir -p "$YTDLP_CONFIG_DIR"
+  touch "$YTDLP_CONFIG_FILE"
+  sed -i '/# BEGIN YTGRABBER JS RUNTIME/,/# END YTGRABBER JS RUNTIME/d' "$YTDLP_CONFIG_FILE" || true
+
+  if [[ -x "$JS_RUNTIME_BIN" ]]; then
+    {
+      echo "# BEGIN YTGRABBER JS RUNTIME"
+      echo "--js-runtimes node:$JS_RUNTIME_BIN"
+      echo "# END YTGRABBER JS RUNTIME"
+    } >> "$YTDLP_CONFIG_FILE"
+    echo "Configured yt-dlp JS runtime in $YTDLP_CONFIG_FILE"
+  fi
+}
+
 install_or_update() {
   [[ -n "$SRC_BIN" ]] || fail "Missing server binary path. Example: $0 ./YTGrabber-Server-linux"
   [[ -f "$SRC_BIN" ]] || fail "Server binary not found: $SRC_BIN"
@@ -263,6 +375,8 @@ install_or_update() {
   chmod +x "$YT_DLP_BIN"
 
   resolve_ffmpeg
+  resolve_js_runtime
+  configure_ytdlp_js_runtime
   resolve_api_token
   write_api_token_file
 
@@ -331,11 +445,16 @@ parse_args "$@"
 if [[ -n "$FFMPEG_CUSTOM_PATH" && "$DOWNLOAD_FFMPEG" -eq 1 ]]; then
   fail "Use either --ffmpeg-path or --download-ffmpeg, not both"
 fi
+if [[ -n "$JS_RUNTIME_PATH" && "$DOWNLOAD_NODEJS" -eq 1 ]]; then
+  fail "Use either --js-runtime-path or --download-nodejs, not both"
+fi
 
 if [[ "$MODE" == "remove" ]]; then
   [[ -z "$SRC_BIN" ]] || fail "--remove does not accept a server binary path"
   [[ -z "$FFMPEG_CUSTOM_PATH" ]] || fail "--remove cannot be combined with --ffmpeg-path"
   [[ "$DOWNLOAD_FFMPEG" -eq 0 ]] || fail "--remove cannot be combined with --download-ffmpeg"
+  [[ -z "$JS_RUNTIME_PATH" ]] || fail "--remove cannot be combined with --js-runtime-path"
+  [[ "$DOWNLOAD_NODEJS" -eq 0 ]] || fail "--remove cannot be combined with --download-nodejs"
   [[ -z "$API_TOKEN" ]] || fail "--remove cannot be combined with --api-token"
   [[ -z "$API_TOKEN_FILE" ]] || fail "--remove cannot be combined with --api-token-file"
   remove_installation

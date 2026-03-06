@@ -38,6 +38,12 @@ Optional Linux installer flags:
 # Download ffmpeg locally for YT Grabber (x86_64)
 ./YTGrabber-linux-installer.sh --download-ffmpeg ./YTGrabber-Server-linux
 
+# Use an existing Node.js runtime for yt-dlp JavaScript extraction
+./YTGrabber-linux-installer.sh --js-runtime-path /path/to/node ./YTGrabber-Server-linux
+
+# Download local Node.js runtime for yt-dlp JavaScript extraction (x86_64/arm64)
+./YTGrabber-linux-installer.sh --download-nodejs ./YTGrabber-Server-linux
+
 # Update an existing install with a newer server binary
 ./YTGrabber-linux-installer.sh --update ./YTGrabber-Server-linux
 
