@@ -214,6 +214,24 @@ async function pingServer() {
   }
 }
 
+function pingServerViaBackground() {
+  return new Promise(resolve => {
+    chrome.runtime.sendMessage({ action: 'refreshHealth' }, response => {
+      if (chrome.runtime.lastError || !response || response.ok !== true) {
+        resolve(false)
+        return
+      }
+      resolve(response.isUp === true)
+    })
+  })
+}
+
+async function checkServerHealth() {
+  const direct = await pingServer()
+  if (direct) return true
+  return pingServerViaBackground()
+}
+
 function applyServerState(isUp) {
   if (!state.panel) return
 
@@ -253,7 +271,7 @@ async function refreshServerStatusUI(forceRefresh = false) {
     label.textContent = 'Vérification du serveur local...'
   }
 
-  const isUp = await pingServer()
+  const isUp = await checkServerHealth()
   applyServerState(isUp)
 
   chrome.runtime.sendMessage({ action: 'refreshHealth' }, () => {

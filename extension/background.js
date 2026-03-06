@@ -26,6 +26,7 @@ function applyActionStatus(isUp) {
 async function refreshActionStatus() {
   const isUp = await checkServerHealth()
   applyActionStatus(isUp)
+  return isUp
 }
 
 async function ensureAlarm() {
@@ -69,7 +70,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) return
 
   if (message.action === 'refreshHealth') {
-    refreshActionStatus().then(() => sendResponse({ ok: true }))
+    refreshActionStatus().then(isUp => sendResponse({ ok: true, isUp }))
     return true
   }
 
