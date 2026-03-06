@@ -63,9 +63,20 @@ function scheduleInject() {
       return
     }
 
-    injectButton(actions)
+    const menuHost = resolveMenuHost(actions)
+    if (!menuHost) {
+      if (tries >= 40) clearInterval(state.injectTimer)
+      return
+    }
+
+    injectButton(menuHost)
     clearInterval(state.injectTimer)
   }, 300)
+}
+
+function resolveMenuHost(anchor) {
+  if (anchor.id === 'menu') return anchor
+  return anchor.closest('#actions-inner')?.querySelector('#menu') || null
 }
 
 function injectButton(anchor) {
@@ -85,9 +96,7 @@ function injectButton(anchor) {
   btn.addEventListener('click', onTriggerClick)
   wrap.appendChild(btn)
 
-  const host = anchor.parentElement
-  if (!host) return
-  host.insertBefore(wrap, anchor)
+  anchor.prepend(wrap)
 }
 
 function removeButton() {

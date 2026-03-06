@@ -77,6 +77,15 @@ Version semantics:
 - `version`: human-friendly release tag (example: `v2026.03.06-10`)
 - `commit`: exact git commit SHA for traceability
 
+## Server Logs
+
+- Log file: `<server-dir>/ytgrabber.log`
+- Rotation backend: `lumberjack` (lightweight rolling logger)
+- Max size per file: 10 MB
+- Retention: 7 days
+- Storage cap target: about 100 MB total (`1` active + up to `9` backups)
+- Old logs are rotated and pruned automatically
+
 ## API Security Model
 
 - Protected endpoints (`/download`, `/progress/{id}`, `/file/{id}`) require a shared API token.

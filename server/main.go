@@ -3,8 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/subtle"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type Job struct {
@@ -87,13 +89,13 @@ func main() {
 }
 
 func setupLogging(exeDir string) {
-	p := filepath.Join(exeDir, "ytgrabber.log")
-	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		log.Printf("failed to open log file (%v), using stderr", err)
-		return
-	}
-	log.SetOutput(f)
+	log.SetOutput(&lumberjack.Logger{
+		Filename:   filepath.Join(exeDir, "ytgrabber.log"),
+		MaxSize:    10, // MB per file
+		MaxBackups: 9,  // current(10) + 9 backups ~= 100MB total cap
+		MaxAge:     7,  // days
+		Compress:   true,
+	})
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 }
 
