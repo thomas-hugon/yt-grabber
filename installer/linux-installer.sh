@@ -4,6 +4,7 @@ set -euo pipefail
 DEST_BIN="$HOME/.local/bin/ytgrabber-server"
 YT_DLP_BIN="$HOME/.local/bin/yt-dlp"
 FFMPEG_BIN="$HOME/.local/bin/ffmpeg"
+FFPROBE_BIN="$HOME/.local/bin/ffprobe"
 JS_RUNTIME_BIN="$HOME/.local/bin/ytg-nodejs"
 LOG_FILE="$HOME/.local/bin/ytgrabber.log"
 TOKEN_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/ytgrabber"
@@ -34,8 +35,8 @@ Usage:
 Options:
   --update                Update an existing installation (same flow as install, with update messaging)
   --remove                Remove YT Grabber server, binaries, and autostart configuration
-  --ffmpeg-path <path>    Use an existing ffmpeg binary from a custom path
-  --download-ffmpeg       Download a local ffmpeg binary to $FFMPEG_BIN (x86_64 only)
+  --ffmpeg-path <path>    Use an existing ffmpeg binary from a custom path (tries matching ffprobe too)
+  --download-ffmpeg       Download local ffmpeg + ffprobe binaries (x86_64 only)
   --js-runtime-path <path>
                           Use an existing Node.js runtime binary and install it to $JS_RUNTIME_BIN
   --download-nodejs       Download local Node.js runtime to $JS_RUNTIME_BIN (x86_64/arm64)
@@ -179,7 +180,7 @@ remove_installation() {
   remove_start_line_if_present "$BASHRC"
   remove_start_line_if_present "$PROFILE"
 
-  rm -f "$DEST_BIN" "$YT_DLP_BIN" "$FFMPEG_BIN" "$JS_RUNTIME_BIN" "$LOG_FILE" "$TOKEN_FILE"
+  rm -f "$DEST_BIN" "$YT_DLP_BIN" "$FFMPEG_BIN" "$FFPROBE_BIN" "$JS_RUNTIME_BIN" "$LOG_FILE" "$TOKEN_FILE"
   if [[ -f "$YTDLP_CONFIG_FILE" ]]; then
     sed -i '/# BEGIN YTGRABBER JS RUNTIME/,/# END YTGRABBER JS RUNTIME/d' "$YTDLP_CONFIG_FILE" || true
     if [[ ! -s "$YTDLP_CONFIG_FILE" ]]; then
@@ -220,24 +221,51 @@ download_ffmpeg_local() {
   [[ "$expected" == "$actual" ]] || fail "ffmpeg archive checksum mismatch"
   tar -xJf "$tmpdir/ffmpeg.tar.xz" -C "$tmpdir"
 
-  local found
-  found="$(find "$tmpdir" -type f -name ffmpeg | head -n 1)"
-  [[ -n "$found" ]] || {
+  local ffmpeg_found ffprobe_found
+  ffmpeg_found="$(find "$tmpdir" -type f -name ffmpeg | head -n 1)"
+  [[ -n "$ffmpeg_found" ]] || {
     rm -rf "$tmpdir"
     fail "Failed to find ffmpeg binary in downloaded archive"
   }
+  ffprobe_found="$(find "$tmpdir" -type f -name ffprobe | head -n 1)"
+  [[ -n "$ffprobe_found" ]] || {
+    rm -rf "$tmpdir"
+    fail "Failed to find ffprobe binary in downloaded archive"
+  }
 
-  install -m 0755 "$found" "$FFMPEG_BIN"
+  install -m 0755 "$ffmpeg_found" "$FFMPEG_BIN"
+  install -m 0755 "$ffprobe_found" "$FFPROBE_BIN"
   rm -rf "$tmpdir"
-  echo "Installed ffmpeg to $FFMPEG_BIN"
+  echo "Installed ffmpeg to $FFMPEG_BIN and ffprobe to $FFPROBE_BIN"
 }
 
 resolve_ffmpeg() {
+  ensure_ffprobe() {
+    local candidate_dir="$1"
+    if [[ -x "$FFPROBE_BIN" ]]; then
+      return
+    fi
+    if [[ -x "$candidate_dir/ffprobe" ]]; then
+      install -m 0755 "$candidate_dir/ffprobe" "$FFPROBE_BIN"
+      return
+    fi
+    if command -v ffprobe >/dev/null 2>&1; then
+      install -m 0755 "$(command -v ffprobe)" "$FFPROBE_BIN"
+      return
+    fi
+  }
+
   if [[ -n "$FFMPEG_CUSTOM_PATH" ]]; then
     [[ -f "$FFMPEG_CUSTOM_PATH" ]] || fail "ffmpeg path not found: $FFMPEG_CUSTOM_PATH"
     [[ -x "$FFMPEG_CUSTOM_PATH" ]] || fail "ffmpeg path is not executable: $FFMPEG_CUSTOM_PATH"
     install -m 0755 "$FFMPEG_CUSTOM_PATH" "$FFMPEG_BIN"
+    ensure_ffprobe "$(dirname "$FFMPEG_CUSTOM_PATH")"
     echo "Installed custom ffmpeg to $FFMPEG_BIN"
+    if [[ -x "$FFPROBE_BIN" ]]; then
+      echo "Using ffprobe at $FFPROBE_BIN"
+    else
+      echo "Warning: ffprobe was not found; yt-dlp metadata extraction may be limited."
+    fi
     return
   fi
 
@@ -247,13 +275,27 @@ resolve_ffmpeg() {
   fi
 
   if [[ -x "$FFMPEG_BIN" ]]; then
+    ensure_ffprobe "$(dirname "$FFMPEG_BIN")"
     echo "Using existing local ffmpeg at $FFMPEG_BIN"
+    if [[ -x "$FFPROBE_BIN" ]]; then
+      echo "Using existing local ffprobe at $FFPROBE_BIN"
+    else
+      echo "Warning: ffprobe was not found; yt-dlp metadata extraction may be limited."
+    fi
     return
   fi
 
   if command -v ffmpeg >/dev/null 2>&1; then
-    install -m 0755 "$(command -v ffmpeg)" "$FFMPEG_BIN"
+    local ffmpeg_path
+    ffmpeg_path="$(command -v ffmpeg)"
+    install -m 0755 "$ffmpeg_path" "$FFMPEG_BIN"
+    ensure_ffprobe "$(dirname "$ffmpeg_path")"
     echo "Copied ffmpeg from PATH to $FFMPEG_BIN"
+    if [[ -x "$FFPROBE_BIN" ]]; then
+      echo "Using ffprobe at $FFPROBE_BIN"
+    else
+      echo "Warning: ffprobe was not found; yt-dlp metadata extraction may be limited."
+    fi
     return
   fi
 

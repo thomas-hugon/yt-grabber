@@ -475,7 +475,7 @@ func (s *server) runDownload(jobID string, req downloadRequest) {
 	j.Error = ""
 	j.mu.Unlock()
 
-	args := []string{"--newline", "--progress", "--ffmpeg-location", ffmpegPath}
+	args := []string{"--newline", "--progress", "--ffmpeg-location", filepath.Dir(ffmpegPath)}
 	args = append(args, buildFormatArgs(req.Format, req.Quality)...)
 	args = append(args, "-o", filepath.Join(tmpDir, "%(title)s.%(ext)s"), req.URL)
 	log.Printf("job %s yt-dlp command: %s [URL redacted]", jobID, formatCommand(ytdlpPath, args[:len(args)-1]))

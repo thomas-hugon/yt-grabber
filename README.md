@@ -24,7 +24,7 @@ chmod +x YTGrabber-linux-installer.sh
 ```
 
 This installs the server under `~/.local/bin`, installs `yt-dlp`, configures a systemd user service when available, and starts it.
-By default it also ensures a local ffmpeg binary at `~/.local/bin/ffmpeg`.
+By default it also ensures local `ffmpeg` and `ffprobe` binaries at `~/.local/bin/ffmpeg` and `~/.local/bin/ffprobe`.
 
 Optional Linux installer flags:
 
@@ -32,10 +32,10 @@ Optional Linux installer flags:
 # Use an extension-generated API token (recommended)
 ./YTGrabber-linux-installer.sh --api-token <token> ./YTGrabber-Server-linux
 
-# Use an existing ffmpeg from a custom location
+# Use an existing ffmpeg from a custom location (installer will also try matching ffprobe)
 ./YTGrabber-linux-installer.sh --ffmpeg-path /path/to/ffmpeg ./YTGrabber-Server-linux
 
-# Download ffmpeg locally for YT Grabber (x86_64)
+# Download ffmpeg + ffprobe locally for YT Grabber (x86_64)
 ./YTGrabber-linux-installer.sh --download-ffmpeg ./YTGrabber-Server-linux
 
 # Use an existing Node.js runtime for yt-dlp JavaScript extraction
