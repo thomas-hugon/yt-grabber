@@ -86,6 +86,7 @@ Version semantics:
 - Installer sets the server token:
   - Linux: `--api-token` or `--api-token-file`
   - Windows: `/APITOKEN=...`
+  - If no token is provided on update/reinstall, existing token is preserved.
 
 ## Updating yt-dlp
 

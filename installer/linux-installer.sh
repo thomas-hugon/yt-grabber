@@ -111,6 +111,11 @@ resolve_api_token() {
 
   API_TOKEN="$(printf '%s' "$API_TOKEN" | tr -d '\r\n' | xargs)"
   if [[ -z "$API_TOKEN" ]]; then
+    if [[ -f "$TOKEN_FILE" ]]; then
+      API_TOKEN="$(tr -d '\r\n' < "$TOKEN_FILE" | xargs)"
+    fi
+  fi
+  if [[ -z "$API_TOKEN" ]]; then
     API_TOKEN="$(generate_token)"
   fi
 }
