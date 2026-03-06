@@ -410,15 +410,15 @@ func buildFormatArgs(format, quality string) []string {
 	quality = strings.TrimPrefix(quality, "p")
 	switch quality {
 	case "1080":
-		return []string{"-f", "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]", "--merge-output-format", "mp4"}
+		return []string{"-f", "bestvideo[vcodec^=avc1][height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]", "--merge-output-format", "mp4"}
 	case "720":
-		return []string{"-f", "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]", "--merge-output-format", "mp4"}
+		return []string{"-f", "bestvideo[vcodec^=avc1][height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]", "--merge-output-format", "mp4"}
 	case "480":
-		return []string{"-f", "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]", "--merge-output-format", "mp4"}
+		return []string{"-f", "bestvideo[vcodec^=avc1][height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]", "--merge-output-format", "mp4"}
 	case "360":
-		return []string{"-f", "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360]", "--merge-output-format", "mp4"}
+		return []string{"-f", "bestvideo[vcodec^=avc1][height<=360][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360]", "--merge-output-format", "mp4"}
 	default:
-		return []string{"-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best", "--merge-output-format", "mp4"}
+		return []string{"-f", "bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best", "--merge-output-format", "mp4"}
 	}
 }
 
