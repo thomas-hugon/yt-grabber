@@ -19,14 +19,16 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Source: "..\YTGrabber-Server.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\extension\*"; DestDir: "{app}\extension"; Flags: ignoreversion recursesubdirs
 Source: "install-extension.html"; DestDir: "{app}"; Flags: ignoreversion
+Source: "download-yt-dlp.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "download-ffmpeg.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Guide d'installation de l'extension Chrome"; Filename: "{app}\install-extension.html"
 Name: "{group}\Désinstaller YT Grabber"; Filename: "{uninstallexe}"
 
 [Run]
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$out='{app}\yt-dlp.exe'; Invoke-WebRequest -Uri 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe' -OutFile $out -UseBasicParsing; $sums=(Invoke-WebRequest -Uri 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS' -UseBasicParsing).Content; $expected=($sums -split \"`n\" | Where-Object { $_ -match '\syt-dlp$' } | Select-Object -First 1).Split(' ',[System.StringSplitOptions]::RemoveEmptyEntries)[0].ToLower(); $actual=(Get-FileHash -Algorithm SHA256 $out).Hash.ToLower(); if($expected -ne $actual){ throw 'yt-dlp checksum mismatch' }"""; StatusMsg: "Téléchargement de yt-dlp..."; Flags: runhidden waituntilterminated
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""$zip='{app}\ffmpeg.zip'; Invoke-WebRequest -Uri 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl-essentials.zip' -OutFile $zip -UseBasicParsing; $sums=(Invoke-WebRequest -Uri 'https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/checksums.sha256' -UseBasicParsing).Content; $expected=($sums -split \"`n\" | Where-Object { $_ -match 'ffmpeg-master-latest-win64-lgpl-essentials.zip$' } | Select-Object -First 1).Split(' ',[System.StringSplitOptions]::RemoveEmptyEntries)[0].ToLower(); $actual=(Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower(); if($expected -ne $actual){ throw 'ffmpeg checksum mismatch' }; Expand-Archive -Path $zip -DestinationPath '{app}\ffmpeg_tmp' -Force; $f=Get-ChildItem '{app}\ffmpeg_tmp' -Filter 'ffmpeg.exe' -Recurse | Select-Object -First 1; Copy-Item $f.FullName '{app}\ffmpeg.exe'; Remove-Item $zip -Force; Remove-Item '{app}\ffmpeg_tmp' -Recurse -Force"""; StatusMsg: "Téléchargement de ffmpeg..."; Flags: runhidden waituntilterminated
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\download-yt-dlp.ps1"" -AppDir ""{app}"""; StatusMsg: "Téléchargement de yt-dlp..."; Flags: runhidden waituntilterminated
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\download-ffmpeg.ps1"" -AppDir ""{app}"""; StatusMsg: "Téléchargement de ffmpeg..."; Flags: runhidden waituntilterminated
 Filename: "schtasks.exe"; Parameters: "/Create /TN ""YTGrabber"" /TR ""{app}\YTGrabber-Server.exe"" /SC ONLOGON /DELAY 0001:00 /RL HIGHEST /F"; Flags: runhidden waituntilterminated
 Filename: "{app}\YTGrabber-Server.exe"; Flags: nowait postinstall runhidden
 Filename: "{app}\install-extension.html"; Flags: shellexec postinstall skipifsilent; Description: "Ouvrir le guide d'installation de l'extension Chrome"
