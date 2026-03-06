@@ -4,6 +4,10 @@
   margin-left: 8px;
 }
 
+#ytg-btn.ytg-native-slot {
+  margin-left: 0;
+}
+
 #ytg-trigger {
   display: inline-flex;
   align-items: center;

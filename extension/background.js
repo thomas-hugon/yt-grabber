@@ -2,6 +2,7 @@ const SERVER_PING_URL = 'http://localhost:9875/ping'
 const STATUS_ALARM = 'ytg-server-health'
 const TOKEN_KEY = 'apiToken'
 const JOB_ID_RE = /^[a-f0-9]{16}$/i
+const TOKEN_RE = /^[a-f0-9]{64}$/i
 
 function randomHex(bytes = 32) {
   const buf = new Uint8Array(bytes)
@@ -17,6 +18,15 @@ async function getOrCreateApiToken() {
   const created = randomHex(32)
   await chrome.storage.local.set({ [TOKEN_KEY]: created })
   return created
+}
+
+async function setApiToken(rawToken) {
+  const token = typeof rawToken === 'string' ? rawToken.trim() : ''
+  if (!TOKEN_RE.test(token)) {
+    throw new Error('invalid token format')
+  }
+  await chrome.storage.local.set({ [TOKEN_KEY]: token })
+  return token
 }
 
 async function checkServerHealth() {
@@ -99,8 +109,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
 
+  if (message.action === 'setApiToken') {
+    setApiToken(message.token)
+      .then(token => sendResponse({ ok: true, token }))
+      .catch(err => sendResponse({ ok: false, error: err?.message || 'failed to set token' }))
+    return true
+  }
+
   if (message.action !== 'download' || !message.jobId) return
-  if (!sender?.tab?.url?.startsWith('https://www.youtube.com/watch')) {
+  if (!sender?.tab?.url?.startsWith('https://www.youtube.com/')) {
     sendResponse({ ok: false, error: 'unauthorized sender context' })
     return
   }

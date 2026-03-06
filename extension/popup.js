@@ -8,8 +8,12 @@ const copyTokenBtn = document.getElementById('copyTokenBtn')
 const pairingInfo = document.getElementById('pairingInfo')
 const releaseLink = document.getElementById('releaseLink')
 const retryBtn = document.getElementById('retryBtn')
+const tokenInput = document.getElementById('tokenInput')
+const saveTokenBtn = document.getElementById('saveTokenBtn')
+const tokenEditorMsg = document.getElementById('tokenEditorMsg')
 
 let checking = false
+const TOKEN_RE = /^[a-f0-9]{64}$/i
 
 function setPending() {
   dot.classList.remove('err')
@@ -22,6 +26,7 @@ function setPending() {
 
 function setTokenLine(token) {
   const t = typeof token === 'string' ? token.trim() : ''
+  tokenInput.value = t
   if (!t) {
     tokenLine.classList.remove('show')
     pairingInfo.classList.remove('show')
@@ -40,6 +45,34 @@ function setReleaseLink(version) {
     return
   }
   releaseLink.href = 'https://github.com/thomas-hugon/yt-grabber/releases/latest'
+}
+
+function setTokenEditorMessage(text, mode = '') {
+  tokenEditorMsg.textContent = text || ''
+  tokenEditorMsg.classList.remove('err', 'ok')
+  if (mode === 'err' || mode === 'ok') {
+    tokenEditorMsg.classList.add(mode)
+  }
+}
+
+function saveTokenFromInput() {
+  const token = tokenInput.value.trim()
+  if (!TOKEN_RE.test(token)) {
+    setTokenEditorMessage('Le token doit contenir 64 caractères hexadécimaux.', 'err')
+    return
+  }
+
+  saveTokenBtn.disabled = true
+  chrome.runtime.sendMessage({ action: 'setApiToken', token }, response => {
+    saveTokenBtn.disabled = false
+    if (chrome.runtime.lastError || !response?.ok) {
+      setTokenEditorMessage('Impossible d’enregistrer le token.', 'err')
+      return
+    }
+    setTokenLine(response.token)
+    setTokenEditorMessage('Token enregistré.', 'ok')
+    checkStatus()
+  })
 }
 
 function setVersionLine(version, commit) {
@@ -99,6 +132,7 @@ async function checkStatus() {
   if (checking) return
   checking = true
   setPending()
+  setTokenEditorMessage('')
   chrome.runtime.sendMessage({ action: 'getApiToken' }, response => {
     if (!chrome.runtime.lastError && response?.ok) {
       setTokenLine(response.token)
@@ -112,6 +146,12 @@ async function checkStatus() {
 }
 
 retryBtn.addEventListener('click', checkStatus)
+saveTokenBtn.addEventListener('click', saveTokenFromInput)
+tokenInput.addEventListener('keydown', evt => {
+  if (evt.key !== 'Enter') return
+  evt.preventDefault()
+  saveTokenFromInput()
+})
 copyTokenBtn.addEventListener('click', () => {
   const token = tokenValue.textContent.trim()
   if (!token) return

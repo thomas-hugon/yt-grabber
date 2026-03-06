@@ -176,6 +176,65 @@
       background: #22283a;
     }
 
+    .token-editor {
+      margin-top: 10px;
+      border-top: 1px solid #2b2e3a;
+      padding-top: 10px;
+    }
+
+    .token-editor label {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+
+    #tokenInput {
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid #3b4257;
+      border-radius: 8px;
+      background: #111624;
+      color: var(--text);
+      font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+      padding: 7px 8px;
+    }
+
+    .token-actions {
+      margin-top: 8px;
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    #saveTokenBtn {
+      border: 1px solid #3b4257;
+      border-radius: 8px;
+      background: #1b2030;
+      color: var(--text);
+      font: 600 12px 'Segoe UI', system-ui, sans-serif;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+
+    #saveTokenBtn:hover {
+      background: #22283a;
+    }
+
+    #tokenEditorMsg {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 11px;
+      min-height: 14px;
+    }
+
+    #tokenEditorMsg.err {
+      color: var(--err);
+    }
+
+    #tokenEditorMsg.ok {
+      color: var(--ok);
+    }
+
     @keyframes pulse {
       0% { box-shadow: 0 0 0 0 rgba(70, 212, 125, 0.5); }
       70% { box-shadow: 0 0 0 7px rgba(70, 212, 125, 0); }
@@ -199,6 +258,14 @@
     <div class="pairing" id="pairingInfo">
       Installer: Linux `--api-token`, Windows `/APITOKEN`.
       <a id="releaseLink" href="https://github.com/thomas-hugon/yt-grabber/releases/latest" target="_blank" rel="noopener noreferrer">Release</a>
+    </div>
+    <div class="token-editor">
+      <label for="tokenInput">Token API extension (64 hex)</label>
+      <input id="tokenInput" type="text" spellcheck="false" autocomplete="off" />
+      <div class="token-actions">
+        <button id="saveTokenBtn" type="button">Enregistrer</button>
+      </div>
+      <div id="tokenEditorMsg"></div>
     </div>
     <div class="actions">
       <button id="retryBtn" type="button">Re-tester</button>

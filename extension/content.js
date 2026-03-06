@@ -9,7 +9,10 @@ const state = {
   downloadLock: false,
   serverStatusTimer: null,
   serverStatus: null,
-  apiToken: null
+  apiToken: null,
+  replacedNativeButton: null,
+  downloadContext: null,
+  lockupInjectQueued: false
 }
 
 const selectors = [
@@ -37,19 +40,27 @@ function watchPage() {
   if (state.observer) return
 
   state.observer = new MutationObserver(() => {
-    if (location.href === state.currentUrl) return
-    state.currentUrl = location.href
-
-    if (location.pathname === '/watch') {
+    if (location.href !== state.currentUrl) {
+      state.currentUrl = location.href
+      removePanel()
+      removeButton()
       scheduleInject()
       return
     }
 
-    removePanel()
-    removeButton()
+    queueCardInject()
   })
 
   state.observer.observe(document.body, { childList: true, subtree: true })
+}
+
+function queueCardInject() {
+  if (state.lockupInjectQueued) return
+  state.lockupInjectQueued = true
+  setTimeout(() => {
+    state.lockupInjectQueued = false
+    injectCardButtons()
+  }, 250)
 }
 
 function scheduleInject() {
@@ -58,28 +69,40 @@ function scheduleInject() {
   state.injectTimer = setInterval(() => {
     tries += 1
     const actions = document.querySelector('#actions-inner #menu-container, #actions #menu')
-    if (!actions || document.getElementById('ytg-btn')) {
-      if (tries >= 40) clearInterval(state.injectTimer)
-      return
+    if (actions && !document.getElementById('ytg-btn')) {
+      const target = resolveInjectionTarget(actions)
+      if (target) injectButton(target)
     }
-
-    const menuHost = resolveMenuHost(actions)
-    if (!menuHost) {
-      if (tries >= 40) clearInterval(state.injectTimer)
-      return
-    }
-
-    injectButton(menuHost)
-    clearInterval(state.injectTimer)
+    injectCardButtons()
+    if (tries >= 40) clearInterval(state.injectTimer)
   }, 300)
+}
+
+function resolveInjectionTarget(anchor) {
+  const nativeButton = resolveNativeDownloadButton(anchor)
+  if (nativeButton) {
+    return { mode: 'replace-native', node: nativeButton }
+  }
+
+  const menuHost = resolveMenuHost(anchor)
+  if (menuHost) {
+    return { mode: 'menu', node: menuHost }
+  }
+
+  return null
+}
+
+function resolveNativeDownloadButton(anchor) {
+  const root = anchor.closest('#actions-inner, #actions') || document
+  return root.querySelector('ytd-download-button-renderer.style-scope.ytd-menu-renderer')
 }
 
 function resolveMenuHost(anchor) {
   if (anchor.id === 'menu') return anchor
-  return anchor.closest('#actions-inner')?.querySelector('#menu') || null
+  return anchor.closest('#actions-inner, #actions')?.querySelector('#menu') || null
 }
 
-function injectButton(anchor) {
+function injectButton(target) {
   const wrap = document.createElement('div')
   wrap.id = 'ytg-btn'
 
@@ -95,16 +118,137 @@ function injectButton(anchor) {
 
   btn.addEventListener('click', onTriggerClick)
   wrap.appendChild(btn)
+  btn.dataset.url = location.href
+  btn.dataset.title = getVideoTitle()
 
-  anchor.prepend(wrap)
+  if (target.mode === 'replace-native') {
+    state.replacedNativeButton = target.node
+    target.node.style.display = 'none'
+    wrap.classList.add('ytg-native-slot')
+    target.node.parentElement?.insertBefore(wrap, target.node)
+    return
+  }
+
+  target.node.prepend(wrap)
+}
+
+function normalizeVideoURL(href) {
+  const raw = typeof href === 'string' ? href.trim() : ''
+  if (!raw) return ''
+  try {
+    const u = new URL(raw, location.origin)
+    if (u.pathname !== '/watch') return ''
+    const v = u.searchParams.get('v')
+    if (!v) return ''
+    return `${u.origin}/watch?v=${encodeURIComponent(v)}`
+  } catch {
+    return ''
+  }
+}
+
+function injectLockupButtons() {
+  const lockups = document.querySelectorAll('yt-lockup-view-model')
+  let injected = 0
+
+  lockups.forEach(lockup => {
+    const root = lockup.querySelector('.yt-lockup-view-model') || lockup
+    if (!root || root.querySelector('.ytg-lockup-btn')) return
+
+    const link = root.querySelector('a.yt-lockup-view-model__content-image[href], a.yt-lockup-metadata-view-model__title[href], a[href*="watch?v="]')
+    const url = normalizeVideoURL(link?.getAttribute('href') || '')
+    if (!url) return
+
+    const titleNode = root.querySelector('.yt-lockup-metadata-view-model__title, a.yt-lockup-metadata-view-model__title')
+    const title = (titleNode?.textContent || '').trim() || 'YouTube Download'
+
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'ytg-lockup-btn'
+    btn.textContent = 'Télécharger'
+    btn.dataset.url = url
+    btn.dataset.title = title
+    btn.addEventListener('click', evt => {
+      evt.preventDefault()
+      evt.stopPropagation()
+      onTriggerClick(evt)
+    })
+
+    const menuButton = root.querySelector('.yt-lockup-metadata-view-model__menu-button')
+    if (menuButton?.parentElement) {
+      menuButton.parentElement.insertBefore(btn, menuButton)
+    } else {
+      const textContainer = root.querySelector('.yt-lockup-metadata-view-model__text-container') || root
+      textContainer.appendChild(btn)
+    }
+    injected += 1
+  })
+
+  return injected
+}
+
+function injectLegacyCardButtons() {
+  const cards = document.querySelectorAll('ytd-compact-video-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-rich-grid-media')
+  let injected = 0
+
+  cards.forEach(card => {
+    if (card.querySelector('.ytg-lockup-btn')) return
+
+    const link = card.querySelector('a#thumbnail[href], a#video-title[href], a[href*="watch?v="]')
+    const url = normalizeVideoURL(link?.getAttribute('href') || '')
+    if (!url) return
+
+    const titleNode = card.querySelector('#video-title, a#video-title, #video-title-link')
+    const title = (titleNode?.textContent || '').trim() || 'YouTube Download'
+
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'ytg-lockup-btn'
+    btn.textContent = 'Télécharger'
+    btn.dataset.url = url
+    btn.dataset.title = title
+    btn.addEventListener('click', evt => {
+      evt.preventDefault()
+      evt.stopPropagation()
+      onTriggerClick(evt)
+    })
+
+    const menu = card.querySelector('#menu, #menu-container, ytd-menu-renderer')
+    if (menu?.parentElement) {
+      menu.parentElement.insertBefore(btn, menu)
+    } else {
+      const details = card.querySelector('#details') || card
+      details.appendChild(btn)
+    }
+    injected += 1
+  })
+
+  return injected
+}
+
+function injectCardButtons() {
+  return injectLockupButtons() + injectLegacyCardButtons()
 }
 
 function removeButton() {
   const wrap = document.getElementById('ytg-btn')
   if (wrap) wrap.remove()
+  document.querySelectorAll('.ytg-lockup-btn').forEach(btn => btn.remove())
+
+  if (state.replacedNativeButton) {
+    state.replacedNativeButton.style.display = ''
+    state.replacedNativeButton = null
+  }
 }
 
-function onTriggerClick() {
+function onTriggerClick(evt) {
+  const trigger = evt?.currentTarget
+  const forcedURL = trigger?.dataset?.url || location.href
+  const forcedTitle = (trigger?.dataset?.title || '').trim()
+  state.downloadContext = {
+    url: forcedURL,
+    title: forcedTitle || getVideoTitle()
+  }
+
   if (state.panel) {
     removePanel()
     return
@@ -123,7 +267,7 @@ function buildPanel() {
       <div class="ytg-logo" aria-hidden="true">
         <svg viewBox="0 0 24 24"><path d="M11 2h2v9h3l-4 5-4-5h3V2zm-6 17h14v2H5z"/></svg>
       </div>
-      <div class="ytg-title" title="${escapeHtml(getVideoTitle())}">${escapeHtml(getVideoTitle())}</div>
+      <div class="ytg-title" title="${escapeHtml(state.downloadContext?.title || getVideoTitle())}">${escapeHtml(state.downloadContext?.title || getVideoTitle())}</div>
       <button class="ytg-close" type="button" aria-label="Fermer">×</button>
     </div>
 
@@ -259,7 +403,26 @@ async function checkServerHealth() {
   return pingServerViaBackground()
 }
 
-async function markIfClientBlocked(statusNode, warningNode) {
+function isLikelyClientBlockError(err) {
+  const msg = String(err?.message || err || '').toLowerCase()
+  return (
+    msg.includes('failed to fetch') ||
+    msg.includes('networkerror') ||
+    msg.includes('err_blocked_by_client') ||
+    msg.includes('blocked by client')
+  )
+}
+
+function serverErrorMessage(statusCode) {
+  if (statusCode === 401) return 'Token API manquant ou invalide. Rechargez l’extension puis réessayez.'
+  if (statusCode === 403) return 'Requête refusée par le serveur (origin/token).'
+  if (statusCode === 503) return 'Serveur démarré mais token non configuré côté serveur.'
+  return `Erreur serveur (${statusCode}).`
+}
+
+async function markIfClientBlocked(statusNode, warningNode, err) {
+  if (!isLikelyClientBlockError(err)) return false
+
   const backgroundCanReachServer = await pingServerViaBackground()
   if (!backgroundCanReachServer) return false
 
@@ -362,30 +525,51 @@ async function onDownloadClick() {
     return
   }
 
-  let payload
+  let resp
   try {
-    const resp = await fetch('http://localhost:9875/download', {
+    resp = await fetch('http://localhost:9875/download', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-YTG-Token': apiToken
       },
       body: JSON.stringify({
-        url: location.href,
-        title: getVideoTitle(),
+        url: state.downloadContext?.url || location.href,
+        title: state.downloadContext?.title || getVideoTitle(),
         format,
         quality
       })
     })
-
-    if (!resp.ok) throw new Error(`download request failed: ${resp.status}`)
-    payload = await resp.json()
   } catch (err) {
-    const isBlocked = await markIfClientBlocked(status, warning)
+    const isBlocked = await markIfClientBlocked(status, warning, err)
     if (!isBlocked) {
       warning.textContent = SERVER_DOWN_WARNING
-      status.textContent = 'Impossible de démarrer le téléchargement'
+      warning.hidden = false
+      status.textContent = 'Impossible de joindre le serveur local'
     }
+    fill.classList.add('error')
+    actionBtn.disabled = false
+    state.downloadLock = false
+    return
+  }
+
+  if (!resp.ok) {
+    status.textContent = 'Impossible de démarrer le téléchargement'
+    warning.textContent = serverErrorMessage(resp.status)
+    warning.hidden = false
+    fill.classList.add('error')
+    actionBtn.disabled = false
+    state.downloadLock = false
+    return
+  }
+
+  let payload
+  try {
+    payload = await resp.json()
+  } catch {
+    status.textContent = 'Réponse serveur invalide'
+    warning.textContent = 'Le serveur a répondu avec un format inattendu.'
+    warning.hidden = false
     fill.classList.add('error')
     actionBtn.disabled = false
     state.downloadLock = false
@@ -426,9 +610,20 @@ async function onDownloadClick() {
       fill.classList.add('done')
       source.close()
       state.source = null
-      chrome.runtime.sendMessage({ action: 'download', jobId: payload.job_id, token: apiToken })
-      state.progressResetTimer = setTimeout(() => resetPanel(), 4000)
-      state.downloadLock = false
+      chrome.runtime.sendMessage({ action: 'download', jobId: payload.job_id, token: apiToken }, response => {
+        if (chrome.runtime.lastError || !response || response.ok !== true) {
+          status.textContent = 'Téléchargement navigateur refusé'
+          warning.textContent = response?.error || chrome.runtime.lastError?.message || 'Le navigateur a refusé le téléchargement.'
+          warning.hidden = false
+          fill.classList.remove('done')
+          fill.classList.add('error')
+          actionBtn.disabled = false
+          state.downloadLock = false
+          return
+        }
+        state.progressResetTimer = setTimeout(() => removePanel(), 1200)
+        state.downloadLock = false
+      })
       return
     }
 
@@ -448,9 +643,10 @@ async function onDownloadClick() {
   source.onerror = async () => {
     source.close()
     state.source = null
-    const isBlocked = await markIfClientBlocked(status, warning)
+    const isBlocked = await markIfClientBlocked(status, warning, null)
     if (!isBlocked) {
       warning.textContent = SERVER_DOWN_WARNING
+      warning.hidden = false
       status.textContent = 'Connexion perdue avec le serveur'
     }
     fill.classList.add('error')
@@ -498,6 +694,7 @@ function removePanel() {
 
   state.downloadLock = false
   state.serverStatus = null
+  state.downloadContext = null
 }
 
 function getVideoTitle() {
@@ -518,5 +715,5 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;')
 }
 
-if (location.pathname === '/watch') scheduleInject()
+scheduleInject()
 watchPage()
