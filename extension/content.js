@@ -888,6 +888,9 @@ async function ensureQualityOptions(forceRefresh = false) {
     renderPanel()
     return
   }
+  if (!forceRefresh && state.qualityStatus === 'loading' && state.qualityRequestUrl === videoUrl) {
+    return
+  }
 
   state.qualityStatus = 'loading'
   state.qualityErrorCode = ''

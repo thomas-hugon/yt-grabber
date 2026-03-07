@@ -646,6 +646,15 @@ func defaultProbeFormats(ctx context.Context, exeDir, videoURL string) (FormatPr
 	args := []string{"--dump-single-json", "--no-warnings", "--no-playlist", "--skip-download", videoURL}
 	output, err := exec.CommandContext(ctx, ytdlpPath, args...).CombinedOutput()
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return FormatProbeResult{}, fmt.Errorf("yt-dlp probe timed out: %w", ctx.Err())
+		}
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return FormatProbeResult{}, fmt.Errorf("yt-dlp probe canceled: %w", ctx.Err())
+		}
+		if text := strings.TrimSpace(string(output)); text != "" {
+			return FormatProbeResult{}, fmt.Errorf("yt-dlp probe failed: %w: %s", err, text)
+		}
 		return FormatProbeResult{}, fmt.Errorf("yt-dlp probe failed: %w", err)
 	}
 	return parseFormatProbeResult(output)

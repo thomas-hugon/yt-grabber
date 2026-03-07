@@ -34,10 +34,16 @@ docker run --rm -v "$ROOT_DIR/extension:/src" -w /src node:20-bookworm sh -lc '
   node --check content.js &&
   node --check background.js &&
   node --check popup.js &&
+  node --check tests/background-format-options.mjs &&
   node --check tests/mock-server.mjs &&
   node --check tests/locale-consistency.mjs &&
   node --check tests/smoke.mjs &&
   node --check tests/smoke-offline.mjs
+'
+
+log "Extension background behavior checks"
+docker run --rm -v "$ROOT_DIR/extension:/src" -w /src node:20-bookworm sh -lc '
+  node tests/background-format-options.mjs
 '
 
 log "Extension popup smoke tests (Playwright)"

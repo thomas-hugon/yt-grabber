@@ -7,7 +7,9 @@ const JOB_ID_RE = /^[a-f0-9]{16}$/i
 const JOB_TOKEN_RE = /^[a-f0-9]{32}$/i
 const SERVER_STATE_TTL_MS = 15000
 const SERVER_TIMEOUT_MS = 3500
+const FORMAT_OPTIONS_TIMEOUT_MS = 25000
 const JOB_POLL_INTERVAL_MS = 900
+const FALLBACK_MP4_QUALITIES = Object.freeze(['best', '1080', '720', '480', '360'])
 
 const DEFAULT_SERVER_STATE = Object.freeze({
   state: 'checking',
@@ -94,6 +96,10 @@ function normalizeQualityOptions(values) {
     value,
     label: value === 'best' ? t('qualityOptionBest') : t('qualityOptionHeight', value)
   }))
+}
+
+function fallbackQualityOptions() {
+  return normalizeQualityOptions(FALLBACK_MP4_QUALITIES)
 }
 
 function sanitizeActiveJobState(raw) {
@@ -496,16 +502,38 @@ async function getFormatOptions(videoUrl) {
   const result = await fetchJSON('/formats', {
     method: 'POST',
     token,
-    body: { url: normalizedUrl }
+    body: { url: normalizedUrl },
+    timeoutMs: FORMAT_OPTIONS_TIMEOUT_MS
   })
 
   if (!result.ok) {
     if (result.status === 401 || result.status === 503) {
       await getServerState(true)
+      return {
+        ok: false,
+        errorCode: sanitizeString(result.payload?.code) || 'format_probe_failed'
+      }
     }
+
+    const errorCode = sanitizeString(result.payload?.code) || 'format_probe_failed'
+    if (errorCode === 'format_probe_failed' || result.status === 0 || result.status >= 500) {
+      console.warn('YTG format probe failed; falling back to static quality options', {
+        videoUrl: normalizedUrl,
+        status: result.status,
+        errorCode,
+        error: result.error?.message || ''
+      })
+      return {
+        ok: true,
+        title: '',
+        qualityOptions: fallbackQualityOptions(),
+        fallbackUsed: true
+      }
+    }
+
     return {
       ok: false,
-      errorCode: sanitizeString(result.payload?.code) || 'format_probe_failed'
+      errorCode
     }
   }
 
