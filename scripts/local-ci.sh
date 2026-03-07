@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARTIFACT_DIR="$ROOT_DIR/.tmp/local-ci"
+UNPACKED_EXTENSION_DIR="$ARTIFACT_DIR/YTGrabber-extension"
 NPM_CACHE_VOLUME="ytg-npm-cache"
 
 log() {
@@ -52,9 +53,19 @@ docker run --rm \
   '
 
 log "Build extension zip"
+rm -rf "$UNPACKED_EXTENSION_DIR"
 rm -f "$ARTIFACT_DIR/YTGrabber-extension.zip"
+mkdir -p "$UNPACKED_EXTENSION_DIR"
+cp "$ROOT_DIR/extension/background.js" "$UNPACKED_EXTENSION_DIR/background.js"
+cp "$ROOT_DIR/extension/content.css" "$UNPACKED_EXTENSION_DIR/content.css"
+cp "$ROOT_DIR/extension/content.js" "$UNPACKED_EXTENSION_DIR/content.js"
+cp "$ROOT_DIR/extension/manifest.json" "$UNPACKED_EXTENSION_DIR/manifest.json"
+cp "$ROOT_DIR/extension/popup.html" "$UNPACKED_EXTENSION_DIR/popup.html"
+cp "$ROOT_DIR/extension/popup.js" "$UNPACKED_EXTENSION_DIR/popup.js"
+cp -R "$ROOT_DIR/extension/icons" "$UNPACKED_EXTENSION_DIR/icons"
+cp -R "$ROOT_DIR/extension/_locales" "$UNPACKED_EXTENSION_DIR/_locales"
 (
-  cd "$ROOT_DIR/extension"
+  cd "$UNPACKED_EXTENSION_DIR"
   zip -qr "$ARTIFACT_DIR/YTGrabber-extension.zip" .
 )
 
@@ -67,4 +78,4 @@ log "Bundle Linux installer artifact"
 cp "$ROOT_DIR/installer/linux-installer.sh" "$ARTIFACT_DIR/YTGrabber-linux-installer.sh"
 chmod +x "$ARTIFACT_DIR/YTGrabber-linux-installer.sh"
 
-log "Local CI passed. Artifacts: $ARTIFACT_DIR"
+log "Local CI passed. Artifacts: $ARTIFACT_DIR (load unpacked from $UNPACKED_EXTENSION_DIR)"

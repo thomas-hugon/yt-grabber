@@ -7,7 +7,12 @@
   "actionTitleUnpaired": { "message": "YT Grabber : appairage requis" },
   "actionTitleOffline": { "message": "YT Grabber : serveur local hors ligne" },
   "qualityOptionBest": { "message": "Qualité max" },
-  "qualityOptionHeight": { "message": "$1$p" },
+  "qualityOptionHeight": {
+    "message": "$height$p",
+    "placeholders": {
+      "height": { "content": "$1" }
+    }
+  },
   "downloadButton": { "message": "Télécharger" },
   "downloadButtonCompact": { "message": "Télécharger" },
   "downloadAction": { "message": "Lancer le téléchargement" },
@@ -26,8 +31,18 @@
   "serverStateOffline": { "message": "Serveur local hors ligne" },
   "qualityLoading": { "message": "Chargement des qualités disponibles…" },
   "progressQueued": { "message": "Préparation du job…" },
-  "progressDownloading": { "message": "Téléchargement $1$%" },
-  "progressEta": { "message": "ETA $1$" },
+  "progressDownloading": {
+    "message": "Téléchargement $percent$%",
+    "placeholders": {
+      "percent": { "content": "$1" }
+    }
+  },
+  "progressEta": {
+    "message": "ETA $eta$",
+    "placeholders": {
+      "eta": { "content": "$1" }
+    }
+  },
   "progressProcessing": { "message": "Finalisation du média…" },
   "progressPreparingBrowserDownload": { "message": "Préparation du téléchargement navigateur…" },
   "successStatus": { "message": "Enregistré dans Téléchargements" },
@@ -60,7 +75,13 @@
   "popupHintServerTokenMissing": { "message": "Le serveur local fonctionne, mais aucun token API n’est encore configuré côté serveur." },
   "popupStatusOffline": { "message": "Serveur local hors ligne" },
   "popupHintOffline": { "message": "Windows : lancez YTGrabber-Server.exe. Linux : systemctl --user start ytgrabber." },
-  "popupVersionLine": { "message": "Version : $1$ ($2$)" },
+  "popupVersionLine": {
+    "message": "Version : $version$ ($commit$)",
+    "placeholders": {
+      "version": { "content": "$1" },
+      "commit": { "content": "$2" }
+    }
+  },
   "popupTokenLineLabel": { "message": "Token extension :" },
   "popupCopyToken": { "message": "Copier" },
   "popupTokenEditorLabel": { "message": "Token API de l’extension (64 hex)" },

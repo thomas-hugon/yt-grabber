@@ -81,9 +81,12 @@ async function installChromeMock(page, messages, scenario) {
         if (!entry?.message) return ''
         const values = normalizeSubstitutions(substitutions)
         let text = entry.message
-        values.forEach((value, index) => {
-          text = text.split('$' + String(index + 1) + '$').join(value)
-        })
+        const placeholders = entry.placeholders || {}
+        for (const [name, placeholder] of Object.entries(placeholders)) {
+          const match = typeof placeholder?.content === 'string' ? placeholder.content.match(/^\\$(\\d+)$/) : null
+          const value = match ? values[Number(match[1]) - 1] ?? '' : ''
+          text = text.split('$' + name + '$').join(value)
+        }
         return text
       }
 
