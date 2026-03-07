@@ -3,48 +3,50 @@ const label = document.getElementById('label')
 const hint = document.getElementById('hint')
 const versionNode = document.getElementById('version')
 const tokenLine = document.getElementById('tokenLine')
+const tokenLineLabel = document.getElementById('tokenLineLabel')
 const tokenValue = document.getElementById('tokenValue')
 const copyTokenBtn = document.getElementById('copyTokenBtn')
 const pairingInfo = document.getElementById('pairingInfo')
+const pairingInstaller = document.getElementById('pairingInstaller')
+const pairingSurfaces = document.getElementById('pairingSurfaces')
 const releaseLink = document.getElementById('releaseLink')
 const retryBtn = document.getElementById('retryBtn')
 const tokenInput = document.getElementById('tokenInput')
 const saveTokenBtn = document.getElementById('saveTokenBtn')
 const tokenEditorMsg = document.getElementById('tokenEditorMsg')
+const tokenEditorLabel = document.getElementById('tokenEditorLabel')
+const popupTitle = document.getElementById('popupTitle')
 
-let checking = false
 const TOKEN_RE = /^[a-f0-9]{64}$/i
+let checking = false
 
-function setPending() {
-  dot.classList.remove('err')
-  label.textContent = 'Vérification du serveur...'
-  hint.classList.remove('show')
-  versionNode.classList.remove('show')
-  versionNode.textContent = ''
-  retryBtn.disabled = true
+function t(key, substitutions) {
+  return chrome.i18n.getMessage(key, substitutions) || key
 }
 
-function setTokenLine(token) {
-  const t = typeof token === 'string' ? token.trim() : ''
-  tokenInput.value = t
-  if (!t) {
-    tokenLine.classList.remove('show')
-    pairingInfo.classList.remove('show')
-    tokenValue.textContent = ''
-    return
-  }
-  tokenValue.textContent = t
-  tokenLine.classList.add('show')
-  pairingInfo.classList.add('show')
+function sendBackground(action, payload = {}) {
+  return new Promise(resolve => {
+    chrome.runtime.sendMessage({ action, ...payload }, response => {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, errorCode: 'runtime_unavailable', error: chrome.runtime.lastError.message })
+        return
+      }
+      resolve(response || { ok: false, errorCode: 'empty_response' })
+    })
+  })
 }
 
-function setReleaseLink(version) {
-  const v = typeof version === 'string' ? version.trim() : ''
-  if (v.startsWith('v')) {
-    releaseLink.href = `https://github.com/thomas-hugon/yt-grabber/releases/tag/${encodeURIComponent(v)}`
-    return
-  }
-  releaseLink.href = 'https://github.com/thomas-hugon/yt-grabber/releases/latest'
+function applyStaticCopy() {
+  document.title = t('popupDocumentTitle')
+  popupTitle.textContent = t('popupTitle')
+  tokenLineLabel.textContent = `${t('popupTokenLineLabel')} `
+  copyTokenBtn.textContent = t('popupCopyToken')
+  tokenEditorLabel.textContent = t('popupTokenEditorLabel')
+  saveTokenBtn.textContent = t('popupSaveToken')
+  retryBtn.textContent = t('popupRetry')
+  pairingInstaller.textContent = t('popupInstallerHint')
+  pairingSurfaces.textContent = t('popupSupportedSurfaces')
+  releaseLink.textContent = t('popupReleaseLink')
 }
 
 function setTokenEditorMessage(text, mode = '') {
@@ -55,106 +57,167 @@ function setTokenEditorMessage(text, mode = '') {
   }
 }
 
-function saveTokenFromInput() {
-  const token = tokenInput.value.trim()
-  if (!TOKEN_RE.test(token)) {
-    setTokenEditorMessage('Le token doit contenir 64 caractères hexadécimaux.', 'err')
+function setTokenLine(token) {
+  const value = typeof token === 'string' ? token.trim() : ''
+  tokenInput.value = value
+  if (!value) {
+    tokenLine.classList.remove('show')
+    pairingInfo.classList.remove('show')
+    tokenValue.textContent = ''
     return
   }
+  tokenValue.textContent = value
+  tokenLine.classList.add('show')
+  pairingInfo.classList.add('show')
+}
 
-  saveTokenBtn.disabled = true
-  chrome.runtime.sendMessage({ action: 'setApiToken', token }, response => {
-    saveTokenBtn.disabled = false
-    if (chrome.runtime.lastError || !response?.ok) {
-      setTokenEditorMessage('Impossible d’enregistrer le token.', 'err')
-      return
-    }
-    setTokenLine(response.token)
-    setTokenEditorMessage('Token enregistré.', 'ok')
-    checkStatus()
-  })
+function setReleaseLink(version) {
+  const value = typeof version === 'string' ? version.trim() : ''
+  if (value.startsWith('v')) {
+    releaseLink.href = `https://github.com/thomas-hugon/yt-grabber/releases/tag/${encodeURIComponent(value)}`
+    return
+  }
+  releaseLink.href = 'https://github.com/thomas-hugon/yt-grabber/releases/latest'
 }
 
 function setVersionLine(version, commit) {
-  const v = typeof version === 'string' ? version.trim() : ''
-  const c = typeof commit === 'string' ? commit.trim() : ''
-  if (!v && !c) {
+  const value = typeof version === 'string' ? version.trim() : ''
+  const sha = typeof commit === 'string' ? commit.trim() : ''
+  if (!value && !sha) {
     versionNode.classList.remove('show')
     versionNode.textContent = ''
     return
   }
-  const shortCommit = c ? c.slice(0, 12) : 'unknown'
-  versionNode.textContent = `Version: ${v || 'unknown'} (${shortCommit})`
+  versionNode.textContent = t('popupVersionLine', [value || 'unknown', (sha || 'unknown').slice(0, 12)])
   versionNode.classList.add('show')
+  setReleaseLink(value)
 }
 
-function setState(result) {
-  const ok = result?.ok === true
+function setPending() {
+  dot.classList.remove('warn', 'err')
+  label.textContent = t('popupStatusChecking')
+  hint.classList.remove('show')
+  hint.textContent = ''
+  retryBtn.disabled = true
+  setVersionLine('', '')
+}
+
+function renderServerState(serverState) {
   checking = false
   retryBtn.disabled = false
+  dot.classList.remove('warn', 'err')
 
-  if (ok) {
-    dot.classList.remove('err')
-    label.textContent = 'Serveur actif - localhost:9875'
-    hint.classList.remove('show')
-    setVersionLine(result.version, result.commit)
-    setReleaseLink(result.version)
+  if (!serverState || serverState.state === 'checking') {
+    setPending()
+    return
+  }
+
+  if (serverState.state === 'paired') {
+    label.textContent = t('popupStatusPaired')
+    hint.textContent = t('popupHintPaired')
+    hint.classList.add('show')
+    setVersionLine(serverState.version, serverState.commit)
+    return
+  }
+
+  if (serverState.state === 'unpaired') {
+    dot.classList.add('warn')
+    label.textContent = t('popupStatusUnpaired')
+    hint.textContent = unpairedHint(serverState.reason)
+    hint.classList.add('show')
+    setVersionLine(serverState.version, serverState.commit)
     return
   }
 
   dot.classList.add('err')
-  label.textContent = 'Serveur introuvable'
-  hint.textContent = 'Windows: lancez YTGrabber-Server.exe. Linux: systemctl --user start ytgrabber.'
+  label.textContent = t('popupStatusOffline')
+  hint.textContent = t('popupHintOffline')
   hint.classList.add('show')
   setVersionLine('', '')
 }
 
-async function pingWithTimeout(timeoutMs = 3000) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    const response = await fetch('http://localhost:9875/ping', { signal: controller.signal })
-    if (!response.ok) return { ok: false }
-    const payload = await response.json().catch(() => ({}))
-    return {
-      ok: true,
-      version: typeof payload.version === 'string' ? payload.version : '',
-      commit: typeof payload.commit === 'string' ? payload.commit : ''
-    }
-  } catch {
-    return { ok: false }
-  } finally {
-    clearTimeout(timer)
+function unpairedHint(reason) {
+  switch (reason) {
+    case 'token_missing':
+      return t('popupHintTokenMissing')
+    case 'token_not_configured':
+      return t('popupHintServerTokenMissing')
+    default:
+      return t('popupHintTokenInvalid')
   }
 }
 
-async function checkStatus() {
+async function checkStatus(forceRefresh = false) {
   if (checking) return
   checking = true
   setPending()
   setTokenEditorMessage('')
-  chrome.runtime.sendMessage({ action: 'getApiToken' }, response => {
-    if (!chrome.runtime.lastError && response?.ok) {
-      setTokenLine(response.token)
-    }
-  })
-  const result = await pingWithTimeout(3000)
-  setState(result)
-  chrome.runtime.sendMessage({ action: 'refreshHealth' }, () => {
-    void chrome.runtime.lastError
-  })
+
+  const tokenResponse = await sendBackground('getApiToken')
+  if (tokenResponse.ok) {
+    setTokenLine(tokenResponse.token)
+  }
+
+  const stateResponse = await sendBackground(forceRefresh ? 'refreshServerState' : 'getServerState')
+  if (stateResponse.ok) {
+    renderServerState(stateResponse.serverState)
+    return
+  }
+  renderServerState({ state: 'offline' })
 }
 
-retryBtn.addEventListener('click', checkStatus)
-saveTokenBtn.addEventListener('click', saveTokenFromInput)
+async function saveTokenFromInput() {
+  const token = tokenInput.value.trim()
+  if (!TOKEN_RE.test(token)) {
+    setTokenEditorMessage(t('popupTokenInvalidFormat'), 'err')
+    return
+  }
+
+  saveTokenBtn.disabled = true
+  const response = await sendBackground('setApiToken', { token })
+  saveTokenBtn.disabled = false
+
+  if (!response.ok) {
+    setTokenEditorMessage(t('popupTokenSaveError'), 'err')
+    return
+  }
+
+  setTokenLine(response.token)
+  setTokenEditorMessage(t('popupTokenSaved'), 'ok')
+  if (response.serverState) {
+    renderServerState(response.serverState)
+  } else {
+    await checkStatus(true)
+  }
+}
+
+retryBtn.addEventListener('click', () => {
+  void checkStatus(true)
+})
+
+saveTokenBtn.addEventListener('click', () => {
+  void saveTokenFromInput()
+})
+
 tokenInput.addEventListener('keydown', evt => {
   if (evt.key !== 'Enter') return
   evt.preventDefault()
-  saveTokenFromInput()
+  void saveTokenFromInput()
 })
+
 copyTokenBtn.addEventListener('click', () => {
   const token = tokenValue.textContent.trim()
   if (!token) return
-  navigator.clipboard.writeText(token).catch(() => {})
+  navigator.clipboard.writeText(token).then(() => {
+    setTokenEditorMessage(t('popupTokenCopied'), 'ok')
+  }).catch(() => {})
 })
-checkStatus()
+
+chrome.runtime.onMessage.addListener(message => {
+  if (message?.type === 'ytg:serverStateChanged') {
+    renderServerState(message.serverState)
+  }
+})
+
+applyStaticCopy()
+void checkStatus(false)

@@ -3,18 +3,22 @@ const state = {
   observer: null,
   injectTimer: null,
   panel: null,
-  source: null,
   outsideHandler: null,
-  progressResetTimer: null,
-  downloadLock: false,
-  serverStatusTimer: null,
-  serverStatus: null,
-  apiToken: null,
   replacedNativeButton: null,
   downloadContext: null,
-  lockupInjectQueued: false,
   panelAnchorEl: null,
-  pendingInjectRoots: []
+  lockupInjectQueued: false,
+  pendingInjectRoots: [],
+  serverState: null,
+  activeJobState: null,
+  formatSelection: 'mp4',
+  selectedQuality: 'best',
+  qualityStatus: 'idle',
+  qualityOptions: [],
+  qualityErrorCode: '',
+  panelErrorCode: '',
+  qualityRequestUrl: '',
+  qualityRequestToken: 0
 }
 
 const selectors = [
@@ -23,20 +27,110 @@ const selectors = [
   '#above-the-fold h1 yt-formatted-string'
 ]
 
-const qualityOptions = [
-  { label: 'Max', value: 'best' },
-  { label: '1080p', value: '1080' },
-  { label: '720p', value: '720' },
-  { label: '480p', value: '480' }
-]
+function t(key, substitutions) {
+  return chrome.i18n.getMessage(key, substitutions) || key
+}
 
-const formatOptions = [
-  { label: 'MP4', value: 'mp4' },
-  { label: 'MP3', value: 'mp3' }
-]
+function escapeHtml(value) {
+  return String(value || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
 
-const SERVER_DOWN_WARNING = 'Serveur local introuvable. Lancez YTGrabber-Server puis réessayez.'
-const CLIENT_BLOCK_WARNING = 'Connexion locale bloquée par le navigateur (Shields/AdBlock). Autorisez youtube.com -> localhost:9875 puis réessayez.'
+function normalizeVideoURL(href) {
+  const raw = typeof href === 'string' ? href.trim() : ''
+  if (!raw) return ''
+  try {
+    const url = new URL(raw, location.origin)
+    if (url.pathname !== '/watch') return ''
+    const videoId = url.searchParams.get('v')
+    if (!videoId) return ''
+    return `${url.origin}/watch?v=${encodeURIComponent(videoId)}`
+  } catch {
+    return ''
+  }
+}
+
+function getVideoTitle() {
+  for (const selector of selectors) {
+    const node = document.querySelector(selector)
+    const text = node?.textContent?.trim()
+    if (text) return text
+  }
+  return document.title.replace(' - YouTube', '').trim()
+}
+
+function clampProgress(value) {
+  if (!Number.isFinite(Number(value))) return 0
+  return Math.max(0, Math.min(100, Number(value)))
+}
+
+function sendBackground(action, payload = {}) {
+  return new Promise(resolve => {
+    chrome.runtime.sendMessage({ action, ...payload }, response => {
+      if (chrome.runtime.lastError) {
+        resolve({
+          ok: false,
+          errorCode: 'runtime_unavailable',
+          error: chrome.runtime.lastError.message
+        })
+        return
+      }
+      resolve(response || { ok: false, errorCode: 'empty_response' })
+    })
+  })
+}
+
+function getRelevantActiveJob() {
+  if (!state.activeJobState || !state.downloadContext) return null
+  const currentVideoUrl = normalizeVideoURL(state.downloadContext.url || location.href)
+  if (!currentVideoUrl) return null
+  return state.activeJobState.videoUrl === currentVideoUrl ? state.activeJobState : null
+}
+
+function getServerState() {
+  return state.serverState || {
+    state: 'checking',
+    reason: '',
+    version: '',
+    commit: ''
+  }
+}
+
+function getErrorMessage(code, fallback = '') {
+  switch (code) {
+    case 'server_offline':
+      return t('errorServerOffline')
+    case 'token_missing':
+      return t('errorTokenMissing')
+    case 'token_invalid':
+    case 'pairing_required':
+      return t('errorTokenInvalid')
+    case 'token_not_configured':
+      return t('errorServerTokenNotConfigured')
+    case 'format_probe_failed':
+      return t('errorFormatProbeFailed')
+    case 'job_start_failed':
+      return t('errorJobStartFailed')
+    case 'polling_failed':
+      return t('errorPollingFailed')
+    case 'browser_download_rejected':
+      return t('errorBrowserDownloadRejected')
+    case 'job_already_active':
+      return t('errorJobAlreadyActive')
+    case 'job_requires_dismissal':
+      return t('errorDismissCurrentResult')
+    case 'invalid_url':
+      return t('errorInvalidVideo')
+    case 'job_failed':
+      return fallback || t('errorJobFailed')
+    default:
+      return fallback || t('errorUnexpected')
+  }
+}
 
 function watchPage() {
   if (state.observer) return
@@ -58,8 +152,8 @@ function watchPage() {
 
 function collectInjectRoots(mutations) {
   const roots = []
-  mutations.forEach(m => {
-    m.addedNodes?.forEach(node => {
+  mutations.forEach(mutation => {
+    mutation.addedNodes?.forEach(node => {
       if (!(node instanceof Element)) return
       roots.push(node)
     })
@@ -96,14 +190,14 @@ function scheduleInject() {
 }
 
 function collectNodes(roots, selector) {
-  const uniq = new Set()
+  const unique = new Set()
   roots.forEach(root => {
     const base = root instanceof Document ? root.documentElement : root
     if (!(base instanceof Element)) return
-    if (base.matches(selector)) uniq.add(base)
-    base.querySelectorAll(selector).forEach(node => uniq.add(node))
+    if (base.matches(selector)) unique.add(base)
+    base.querySelectorAll(selector).forEach(node => unique.add(node))
   })
-  return Array.from(uniq)
+  return Array.from(unique)
 }
 
 function resolveInjectionTarget(anchor) {
@@ -141,13 +235,13 @@ function injectButton(target) {
     <span class="ytg-trigger-icon" aria-hidden="true">
       <svg viewBox="0 0 24 24"><path d="M11 3h2v9h3l-4 5-4-5h3V3zm-7 15h16v2H4z"/></svg>
     </span>
-    <span>Télécharger</span>
+    <span>${escapeHtml(t('downloadButton'))}</span>
   `
-
-  btn.addEventListener('click', onTriggerClick)
-  wrap.appendChild(btn)
   btn.dataset.url = location.href
   btn.dataset.title = getVideoTitle()
+  btn.addEventListener('click', onTriggerClick)
+
+  wrap.appendChild(btn)
 
   if (target.mode === 'replace-native') {
     state.replacedNativeButton = target.node
@@ -160,18 +254,8 @@ function injectButton(target) {
   target.node.prepend(wrap)
 }
 
-function normalizeVideoURL(href) {
-  const raw = typeof href === 'string' ? href.trim() : ''
-  if (!raw) return ''
-  try {
-    const u = new URL(raw, location.origin)
-    if (u.pathname !== '/watch') return ''
-    const v = u.searchParams.get('v')
-    if (!v) return ''
-    return `${u.origin}/watch?v=${encodeURIComponent(v)}`
-  } catch {
-    return ''
-  }
+function injectCardButtons(roots) {
+  return injectLockupButtons(roots) + injectLegacyCardButtons(roots)
 }
 
 function injectLockupButtons(roots) {
@@ -200,7 +284,6 @@ function injectLockupButtons(roots) {
     }
 
     const btn = createLockupButton(url, title)
-
     const menuButton = root.querySelector('.yt-lockup-metadata-view-model__menu-button')
     if (menuButton?.parentElement) {
       menuButton.parentElement.insertBefore(btn, menuButton)
@@ -237,7 +320,6 @@ function injectLegacyCardButtons(roots) {
     }
 
     const btn = createLockupButton(url, title)
-
     const menu = card.querySelector('#menu, #menu-container, ytd-menu-renderer')
     if (menu?.parentElement) {
       menu.parentElement.insertBefore(btn, menu)
@@ -251,22 +333,45 @@ function injectLegacyCardButtons(roots) {
   return injected
 }
 
-function injectCardButtons(roots) {
-  return injectLockupButtons(roots) + injectLegacyCardButtons(roots)
-}
-
 function createLockupButton(url, title) {
   const btn = document.createElement('button')
   btn.type = 'button'
   btn.className = 'ytg-lockup-btn'
-  btn.textContent = 'Télécharger'
+  btn.innerHTML = `
+    <span class="ytg-lockup-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M11 3h2v9h3l-4 5-4-5h3V3zm-7 15h16v2H4z"/></svg>
+    </span>
+    <span class="ytg-lockup-label">${escapeHtml(t('downloadButtonCompact'))}</span>
+  `
   btn.dataset.url = url
   btn.dataset.title = title
-  btn.addEventListener('click', evt => {
-    evt.preventDefault()
+
+  const suppressEvent = evt => {
+    if (evt.cancelable) evt.preventDefault()
     evt.stopPropagation()
+    evt.stopImmediatePropagation?.()
+  }
+
+  ;['pointerdown', 'mousedown', 'mouseup', 'auxclick', 'dblclick'].forEach(type => {
+    btn.addEventListener(type, suppressEvent)
+  })
+
+  btn.addEventListener('click', evt => {
+    suppressEvent(evt)
     onTriggerClick(evt)
   })
+
+  btn.addEventListener('keydown', evt => {
+    if (evt.key !== 'Enter' && evt.key !== ' ') return
+    suppressEvent(evt)
+  })
+
+  btn.addEventListener('keyup', evt => {
+    if (evt.key !== 'Enter' && evt.key !== ' ') return
+    suppressEvent(evt)
+    onTriggerClick(evt)
+  })
+
   return btn
 }
 
@@ -294,10 +399,8 @@ function refreshCardButtonContext(btn) {
 }
 
 function removeButton() {
-  const wrap = document.getElementById('ytg-btn')
-  if (wrap) wrap.remove()
+  document.getElementById('ytg-btn')?.remove()
   document.querySelectorAll('.ytg-lockup-btn').forEach(btn => btn.remove())
-
   if (state.replacedNativeButton) {
     state.replacedNativeButton.style.display = ''
     state.replacedNativeButton = null
@@ -312,23 +415,35 @@ function onTriggerClick(evt) {
     }
     state.panelAnchorEl = trigger
   }
-  const forcedURL = trigger?.dataset?.url || location.href
-  const forcedTitle = (trigger?.dataset?.title || '').trim()
+
   state.downloadContext = {
-    url: forcedURL,
-    title: forcedTitle || getVideoTitle()
+    url: trigger?.dataset?.url || location.href,
+    title: sanitizeText(trigger?.dataset?.title) || getVideoTitle()
   }
 
   if (state.panel) {
     removePanel()
     return
   }
-  buildPanel()
+
+  void buildPanel()
 }
 
-function buildPanel() {
+function sanitizeText(value) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+async function buildPanel() {
   const trigger = state.panelAnchorEl || document.getElementById('ytg-trigger')
   if (!trigger) return
+
+  state.formatSelection = 'mp4'
+  state.selectedQuality = 'best'
+  state.qualityStatus = 'idle'
+  state.qualityOptions = []
+  state.qualityErrorCode = ''
+  state.panelErrorCode = ''
+  state.qualityRequestUrl = ''
 
   const panel = document.createElement('div')
   panel.id = 'ytg-panel'
@@ -337,36 +452,39 @@ function buildPanel() {
       <div class="ytg-logo" aria-hidden="true">
         <svg viewBox="0 0 24 24"><path d="M11 2h2v9h3l-4 5-4-5h3V2zm-6 17h14v2H5z"/></svg>
       </div>
-      <div class="ytg-title" title="${escapeHtml(state.downloadContext?.title || getVideoTitle())}">${escapeHtml(state.downloadContext?.title || getVideoTitle())}</div>
-      <button class="ytg-close" type="button" aria-label="Fermer">×</button>
+      <div class="ytg-title" id="ytg-title"></div>
+      <button class="ytg-close" id="ytg-close" type="button" aria-label="${escapeHtml(t('panelDismiss'))}">×</button>
     </div>
 
     <div id="ytg-server-state" class="ytg-server-state pending" role="status" aria-live="polite">
-      <span class="dot" id="ytg-server-dot" aria-hidden="true"></span>
-      <span id="ytg-server-label">Vérification du serveur local...</span>
-      <button id="ytg-server-retry" type="button">Re-tester</button>
+      <span class="dot" aria-hidden="true"></span>
+      <span id="ytg-server-label"></span>
+      <button id="ytg-server-retry" type="button">${escapeHtml(t('panelRetry'))}</button>
     </div>
 
-    <div class="ytg-section">
-      <div class="ytg-label">Format</div>
-      <div class="ytg-segment" data-group="format"></div>
+    <div class="ytg-section" id="ytg-format-section">
+      <div class="ytg-label">${escapeHtml(t('panelFormatLabel'))}</div>
+      <div class="ytg-segment" id="ytg-format-options"></div>
     </div>
 
     <div class="ytg-section" id="ytg-quality-row">
-      <div class="ytg-label">Qualité</div>
-      <div class="ytg-segment" data-group="quality"></div>
+      <div class="ytg-label">${escapeHtml(t('panelQualityLabel'))}</div>
+      <div id="ytg-quality-content"></div>
     </div>
 
-    <button id="ytg-download" type="button">Télécharger</button>
+    <div id="ytg-alert" class="ytg-warning" hidden></div>
 
-    <div id="ytg-server-warning" class="ytg-warning" hidden>
-      Serveur local introuvable. Lancez YTGrabber-Server puis réessayez.
-    </div>
+    <button id="ytg-download" type="button">${escapeHtml(t('downloadAction'))}</button>
 
     <div id="ytg-progress" class="ytg-progress" hidden>
       <div class="ytg-progress-bar"><div id="ytg-progress-fill"></div></div>
-      <div id="ytg-status">Préparation…</div>
+      <div id="ytg-status"></div>
       <div id="ytg-meta"></div>
+      <div id="ytg-summary" class="ytg-summary"></div>
+      <div id="ytg-progress-actions" class="ytg-progress-actions" hidden>
+        <button id="ytg-open-downloads" class="ytg-secondary" type="button">${escapeHtml(t('openDownloadsAction'))}</button>
+        <button id="ytg-dismiss" class="ytg-secondary" type="button">${escapeHtml(t('panelDismiss'))}</button>
+      </div>
     </div>
   `
 
@@ -374,427 +492,508 @@ function buildPanel() {
   state.panel = panel
 
   placePanel(trigger, panel)
-  populateSegments(panel)
+  renderFormatButtons()
+  updatePanelTitle()
+  renderPanel()
 
-  panel.querySelector('.ytg-close').addEventListener('click', removePanel)
-  panel.querySelector('#ytg-download').addEventListener('click', onDownloadClick)
+  panel.querySelector('#ytg-close').addEventListener('click', () => {
+    void dismissOrClosePanel()
+  })
+
+  panel.querySelector('#ytg-download').addEventListener('click', () => {
+    void startDownloadFromPanel()
+  })
+
   panel.querySelector('#ytg-server-retry').addEventListener('click', () => {
-    refreshServerStatusUI(true)
+    void refreshPanelState(true)
+  })
+
+  panel.querySelector('#ytg-open-downloads').addEventListener('click', async () => {
+    const response = await sendBackground('openDownloads')
+    if (!response.ok) {
+      state.qualityErrorCode = response.errorCode || 'open_downloads_failed'
+      renderPanel()
+    }
+  })
+
+  panel.querySelector('#ytg-dismiss').addEventListener('click', () => {
+    void dismissActiveJobAndClose()
   })
 
   setTimeout(() => {
     state.outsideHandler = evt => {
-      const isTrigger = evt.target.closest('#ytg-trigger')
-      if (isTrigger) return
-      if (!panel.contains(evt.target)) removePanel()
+      const target = evt.target
+      const path = typeof evt.composedPath === 'function' ? evt.composedPath() : []
+      const clickedTrigger = path.some(node => node instanceof Element && node.closest?.('#ytg-trigger, .ytg-lockup-btn'))
+      if (clickedTrigger) return
+      if (path.includes(state.panel)) return
+      if (!(target instanceof Element)) return
+      if (getRelevantActiveJob() && isTerminalRenderState()) return
+      removePanel()
     }
     document.addEventListener('click', state.outsideHandler)
-  }, 100)
+  }, 0)
 
-  refreshServerStatusUI()
-  state.serverStatusTimer = setInterval(() => refreshServerStatusUI(), 15000)
+  await refreshPanelState(false)
 }
 
 function placePanel(trigger, panel) {
   const rect = trigger.getBoundingClientRect()
   panel.style.top = `${window.scrollY + rect.bottom + 8}px`
-  panel.style.left = `${Math.max(12, window.scrollX + rect.right - 290)}px`
+  panel.style.left = `${Math.max(12, window.scrollX + rect.right - 320)}px`
 }
 
-function populateSegments(panel) {
-  const formatRoot = panel.querySelector('[data-group="format"]')
-  const qualityRoot = panel.querySelector('[data-group="quality"]')
-
-  mountSegment(formatRoot, formatOptions, 'mp4', value => {
-    const row = panel.querySelector('#ytg-quality-row')
-    row.hidden = value === 'mp3'
-  })
-  mountSegment(qualityRoot, qualityOptions, 'best')
+function updatePanelTitle() {
+  state.panel?.querySelector('#ytg-title')?.replaceChildren(document.createTextNode(state.downloadContext?.title || getVideoTitle()))
 }
 
-function mountSegment(root, options, activeValue, onChange) {
-  options.forEach(opt => {
+function renderFormatButtons() {
+  if (!state.panel) return
+  const root = state.panel.querySelector('#ytg-format-options')
+  root.textContent = ''
+
+  const options = [
+    { value: 'mp4', label: t('formatMp4') },
+    { value: 'mp3', label: t('formatMp3') }
+  ]
+
+  options.forEach(option => {
     const btn = document.createElement('button')
     btn.type = 'button'
-    btn.dataset.value = opt.value
-    btn.textContent = opt.label
-    if (opt.value === activeValue) btn.classList.add('active')
-    btn.addEventListener('click', () => {
-      root.querySelectorAll('button').forEach(n => n.classList.remove('active'))
+    btn.dataset.value = option.value
+    btn.textContent = option.label
+    if (option.value === state.formatSelection) {
       btn.classList.add('active')
-      if (onChange) onChange(opt.value)
+    }
+    btn.addEventListener('click', () => {
+      if (getRelevantActiveJob()) return
+      state.formatSelection = option.value
+      renderFormatButtons()
+      if (state.formatSelection === 'mp4') {
+        if (state.qualityStatus === 'idle' || state.qualityRequestUrl !== normalizeVideoURL(state.downloadContext?.url || location.href)) {
+          void ensureQualityOptions()
+        } else {
+          renderPanel()
+        }
+      } else {
+        renderPanel()
+      }
     })
     root.appendChild(btn)
   })
 }
 
-async function pingServer() {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 3000)
-  try {
-    const pong = await fetch('http://localhost:9875/ping', { signal: controller.signal })
-    return pong.ok
-  } catch {
-    return false
-  } finally {
-    clearTimeout(timer)
+function isTerminalRenderState() {
+  const job = getRelevantActiveJob()
+  if (!job) return false
+  return job.status === 'ready' || job.status === 'error'
+}
+
+function serverStateClass(nextState) {
+  if (nextState.state === 'paired') return 'online'
+  if (nextState.state === 'unpaired') return 'unpaired'
+  if (nextState.state === 'offline') return 'offline'
+  return 'pending'
+}
+
+function serverStateLabel(nextState) {
+  if (nextState.state === 'paired') return t('serverStatePaired')
+  if (nextState.state === 'unpaired') return t('serverStateUnpaired')
+  if (nextState.state === 'offline') return t('serverStateOffline')
+  return t('serverStateChecking')
+}
+
+function panelAlert() {
+  const job = getRelevantActiveJob()
+  if (job) return ''
+
+  const nextServerState = getServerState()
+  if (nextServerState.state !== 'paired') {
+    return getErrorMessage(errorCodeFromServerState(nextServerState))
   }
+  if (state.panelErrorCode) {
+    return getErrorMessage(state.panelErrorCode)
+  }
+  if (state.formatSelection === 'mp4' && state.qualityStatus === 'error') {
+    return getErrorMessage(state.qualityErrorCode || 'format_probe_failed')
+  }
+  return ''
 }
 
-function getApiToken() {
-  return new Promise(resolve => {
-    chrome.runtime.sendMessage({ action: 'getApiToken' }, response => {
-      if (chrome.runtime.lastError || !response || response.ok !== true || !response.token) {
-        resolve('')
-        return
-      }
-      state.apiToken = response.token.trim()
-      resolve(state.apiToken)
+function errorCodeFromServerState(nextState) {
+  if (nextState.state === 'offline') return 'server_offline'
+  if (nextState.state === 'unpaired') return nextState.reason || 'pairing_required'
+  return ''
+}
+
+function renderQualityOptions() {
+  if (!state.panel) return
+  const row = state.panel.querySelector('#ytg-quality-row')
+  const root = state.panel.querySelector('#ytg-quality-content')
+  if (!row || !root) return
+
+  if (getRelevantActiveJob() || state.formatSelection === 'mp3') {
+    row.hidden = true
+    root.textContent = ''
+    return
+  }
+
+  row.hidden = false
+  root.textContent = ''
+
+  if (state.qualityStatus === 'loading') {
+    const loading = document.createElement('div')
+    loading.className = 'ytg-inline-state loading'
+    loading.textContent = t('qualityLoading')
+    root.appendChild(loading)
+    return
+  }
+
+  if (state.qualityStatus === 'error') {
+    const errorWrap = document.createElement('div')
+    errorWrap.className = 'ytg-inline-state error'
+
+    const text = document.createElement('span')
+    text.textContent = getErrorMessage(state.qualityErrorCode || 'format_probe_failed')
+    errorWrap.appendChild(text)
+
+    const retryBtn = document.createElement('button')
+    retryBtn.type = 'button'
+    retryBtn.className = 'ytg-inline-action'
+    retryBtn.textContent = t('panelRetry')
+    retryBtn.addEventListener('click', () => {
+      void ensureQualityOptions(true)
     })
-  })
-}
+    errorWrap.appendChild(retryBtn)
+    root.appendChild(errorWrap)
+    return
+  }
 
-function pingServerViaBackground() {
-  return new Promise(resolve => {
-    chrome.runtime.sendMessage({ action: 'refreshHealth' }, response => {
-      if (chrome.runtime.lastError || !response || response.ok !== true) {
-        resolve(false)
-        return
-      }
-      resolve(response.isUp === true)
+  const segment = document.createElement('div')
+  segment.className = 'ytg-segment'
+  state.qualityOptions.forEach(option => {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.dataset.value = option.value
+    btn.textContent = option.label
+    if (option.value === state.selectedQuality) {
+      btn.classList.add('active')
+    }
+    btn.addEventListener('click', () => {
+      state.selectedQuality = option.value
+      renderQualityOptions()
+      renderPanel()
     })
+    segment.appendChild(btn)
   })
+  root.appendChild(segment)
 }
 
-async function checkServerHealth() {
-  const direct = await pingServer()
-  if (direct) return true
-  return pingServerViaBackground()
-}
-
-function isLikelyClientBlockError(err) {
-  const msg = String(err?.message || err || '').toLowerCase()
-  return (
-    msg.includes('failed to fetch') ||
-    msg.includes('networkerror') ||
-    msg.includes('err_blocked_by_client') ||
-    msg.includes('blocked by client')
-  )
-}
-
-function serverErrorMessage(statusCode) {
-  if (statusCode === 401) return 'Token API manquant ou invalide. Rechargez l’extension puis réessayez.'
-  if (statusCode === 403) return 'Requête refusée par le serveur (origin/token).'
-  if (statusCode === 503) return 'Serveur démarré mais token non configuré côté serveur.'
-  return `Erreur serveur (${statusCode}).`
-}
-
-async function markIfClientBlocked(statusNode, warningNode, err) {
-  if (!isLikelyClientBlockError(err)) return false
-
-  const backgroundCanReachServer = await pingServerViaBackground()
-  if (!backgroundCanReachServer) return false
-
-  if (statusNode) statusNode.textContent = 'Connexion locale bloquée par le navigateur'
-  if (warningNode) {
-    warningNode.textContent = CLIENT_BLOCK_WARNING
-    warningNode.hidden = false
+function canStartDownload() {
+  if (getRelevantActiveJob()) return false
+  const nextServerState = getServerState()
+  if (nextServerState.state !== 'paired') return false
+  if (state.formatSelection === 'mp4') {
+    return state.qualityStatus === 'ready' && state.qualityOptions.length > 0
   }
   return true
 }
 
-function applyServerState(isUp) {
+function renderProgress(job) {
   if (!state.panel) return
 
-  const stateRoot = state.panel.querySelector('#ytg-server-state')
-  const label = state.panel.querySelector('#ytg-server-label')
-  const warning = state.panel.querySelector('#ytg-server-warning')
-  const actionBtn = state.panel.querySelector('#ytg-download')
-  if (!stateRoot || !label || !warning || !actionBtn) return
-
-  stateRoot.classList.remove('pending', 'online', 'offline')
-
-  if (isUp) {
-    stateRoot.classList.add('online')
-    label.textContent = 'Serveur actif (localhost:9875)'
-    warning.hidden = true
-    actionBtn.disabled = false
-    state.serverStatus = true
-    return
-  }
-
-  stateRoot.classList.add('offline')
-  label.textContent = 'Serveur indisponible (localhost:9875)'
-  warning.textContent = SERVER_DOWN_WARNING
-  warning.hidden = false
-  actionBtn.disabled = true
-  state.serverStatus = false
-}
-
-async function refreshServerStatusUI(forceRefresh = false) {
-  if (!state.panel) return false
-  if (!forceRefresh && state.downloadLock) return state.serverStatus === true
-
-  const stateRoot = state.panel.querySelector('#ytg-server-state')
-  const label = state.panel.querySelector('#ytg-server-label')
-  if (stateRoot && label) {
-    stateRoot.classList.remove('online', 'offline')
-    stateRoot.classList.add('pending')
-    label.textContent = 'Vérification du serveur local...'
-  }
-
-  const isUp = await checkServerHealth()
-  applyServerState(isUp)
-
-  chrome.runtime.sendMessage({ action: 'refreshHealth' }, () => {
-    void chrome.runtime.lastError
-  })
-
-  return isUp
-}
-
-async function onDownloadClick() {
-  if (!state.panel || state.downloadLock) return
-  state.downloadLock = true
-
-  const warning = state.panel.querySelector('#ytg-server-warning')
   const progress = state.panel.querySelector('#ytg-progress')
+  const fill = state.panel.querySelector('#ytg-progress-fill')
   const status = state.panel.querySelector('#ytg-status')
   const meta = state.panel.querySelector('#ytg-meta')
-  const fill = state.panel.querySelector('#ytg-progress-fill')
-  const actionBtn = state.panel.querySelector('#ytg-download')
+  const summary = state.panel.querySelector('#ytg-summary')
+  const actions = state.panel.querySelector('#ytg-progress-actions')
+  const openDownloads = state.panel.querySelector('#ytg-open-downloads')
 
-  actionBtn.disabled = true
-  warning.hidden = true
+  if (!job) {
+    progress.hidden = true
+    fill.style.width = '0%'
+    fill.classList.remove('done', 'error')
+    status.textContent = ''
+    meta.textContent = ''
+    summary.textContent = ''
+    actions.hidden = true
+    openDownloads.hidden = true
+    return
+  }
+
   progress.hidden = false
-  status.textContent = 'Vérification du serveur...'
-  meta.textContent = ''
-  fill.style.width = '0%'
-  fill.classList.remove('done', 'error')
+  const progressValue = clampProgress(job.progress)
+  fill.style.width = `${progressValue}%`
+  fill.classList.toggle('done', job.status === 'ready' && job.downloadState === 'accepted')
+  fill.classList.toggle('error', job.status === 'error')
 
-  const isUp = await refreshServerStatusUI(true)
-  if (!isUp) {
-    status.textContent = 'Serveur indisponible'
-    fill.classList.add('error')
-    actionBtn.disabled = true
-    state.downloadLock = false
+  if (job.status === 'queued') {
+    status.textContent = t('progressQueued')
+    meta.textContent = ''
+    summary.textContent = ''
+    actions.hidden = true
     return
   }
 
-  const format = state.panel.querySelector('[data-group="format"] button.active')?.dataset.value || 'mp4'
-  const quality = state.panel.querySelector('[data-group="quality"] button.active')?.dataset.value || 'best'
-  const apiToken = await getApiToken()
-  if (!apiToken) {
-    status.textContent = 'Token API introuvable'
-    warning.textContent = 'Le token de sécurité est manquant. Rechargez l’extension YT Grabber.'
-    warning.hidden = false
-    fill.classList.add('error')
-    actionBtn.disabled = false
-    state.downloadLock = false
+  if (job.status === 'downloading') {
+    status.textContent = t('progressDownloading', progressValue.toFixed(1))
+    meta.textContent = [job.speed, job.eta ? t('progressEta', job.eta) : ''].filter(Boolean).join(' • ')
+    summary.textContent = ''
+    actions.hidden = true
     return
   }
 
-  let resp
-  try {
-    resp = await fetch('http://localhost:9875/download', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-YTG-Token': apiToken
-      },
-      body: JSON.stringify({
-        url: state.downloadContext?.url || location.href,
-        title: state.downloadContext?.title || getVideoTitle(),
-        format,
-        quality
-      })
-    })
-  } catch (err) {
-    const isBlocked = await markIfClientBlocked(status, warning, err)
-    if (!isBlocked) {
-      warning.textContent = SERVER_DOWN_WARNING
-      warning.hidden = false
-      status.textContent = 'Impossible de joindre le serveur local'
-    }
-    fill.classList.add('error')
-    actionBtn.disabled = false
-    state.downloadLock = false
+  if (job.status === 'processing') {
+    status.textContent = t('progressProcessing')
+    meta.textContent = ''
+    summary.textContent = ''
+    actions.hidden = true
     return
   }
 
-  if (!resp.ok) {
-    status.textContent = 'Impossible de démarrer le téléchargement'
-    warning.textContent = serverErrorMessage(resp.status)
-    warning.hidden = false
-    fill.classList.add('error')
-    actionBtn.disabled = false
-    state.downloadLock = false
+  if (job.status === 'ready' && job.downloadState !== 'accepted') {
+    status.textContent = t('progressPreparingBrowserDownload')
+    meta.textContent = ''
+    summary.textContent = ''
+    actions.hidden = true
     return
   }
 
-  let payload
-  try {
-    payload = await resp.json()
-  } catch {
-    status.textContent = 'Réponse serveur invalide'
-    warning.textContent = 'Le serveur a répondu avec un format inattendu.'
-    warning.hidden = false
-    fill.classList.add('error')
-    actionBtn.disabled = false
-    state.downloadLock = false
+  if (job.status === 'ready') {
+    status.textContent = t('successStatus')
+    meta.textContent = ''
+    summary.innerHTML = buildSummaryHTML(job, true)
+    actions.hidden = false
+    openDownloads.hidden = false
     return
   }
 
-  status.textContent = 'Téléchargement en cours...'
-  const jobToken = typeof payload.job_token === 'string' ? payload.job_token.trim() : ''
-  if (!jobToken) {
-    status.textContent = 'Réponse serveur invalide'
-    warning.textContent = 'Token de job manquant dans la réponse serveur.'
-    warning.hidden = false
-    fill.classList.add('error')
-    actionBtn.disabled = false
-    state.downloadLock = false
-    return
+  status.textContent = getErrorMessage(job.errorCode || 'job_failed', job.error)
+  meta.textContent = job.error || ''
+  summary.innerHTML = buildSummaryHTML(job, false)
+  actions.hidden = false
+  openDownloads.hidden = true
+}
+
+function buildSummaryHTML(job, includeSavedHint) {
+  const lines = []
+  if (job.filename) {
+    lines.push(`
+      <div class="ytg-summary-row">
+        <span class="ytg-summary-label">${escapeHtml(t('summaryFilenameLabel'))}</span>
+        <span class="ytg-summary-value">${escapeHtml(job.filename)}</span>
+      </div>
+    `)
   }
 
-  const source = new EventSource(`http://localhost:9875/progress/${payload.job_id}?job_token=${encodeURIComponent(jobToken)}`)
-  state.source = source
-
-  source.onmessage = event => {
-    let job
-    try {
-      job = JSON.parse(event.data)
-    } catch {
-      return
-    }
-
-    const progressVal = Number.isFinite(job.progress) ? Math.max(0, Math.min(100, job.progress)) : 0
-    fill.style.width = `${progressVal}%`
-
-    if (job.status === 'downloading') {
-      status.textContent = `Téléchargement ${progressVal.toFixed(1)}%`
-      meta.textContent = [job.speed, job.eta ? `ETA ${job.eta}` : ''].filter(Boolean).join(' • ')
-      return
-    }
-
-    if (job.status === 'processing') {
-      status.textContent = 'Finalisation en cours...'
-      meta.textContent = ''
-      return
-    }
-
-    if (job.status === 'ready') {
-      status.textContent = 'Fichier prêt, lancement...'
-      meta.textContent = ''
-      fill.style.width = '100%'
-      fill.classList.add('done')
-      source.close()
-      state.source = null
-      chrome.runtime.sendMessage({ action: 'download', jobId: payload.job_id, jobToken }, response => {
-        if (chrome.runtime.lastError || !response || response.ok !== true) {
-          status.textContent = 'Téléchargement navigateur refusé'
-          warning.textContent = response?.error || chrome.runtime.lastError?.message || 'Le navigateur a refusé le téléchargement.'
-          warning.hidden = false
-          fill.classList.remove('done')
-          fill.classList.add('error')
-          actionBtn.disabled = false
-          state.downloadLock = false
-          return
-        }
-        state.progressResetTimer = setTimeout(() => removePanel(), 1200)
-        state.downloadLock = false
-      })
-      return
-    }
-
-    if (job.status === 'error') {
-      status.textContent = job.error || 'Échec du téléchargement'
-      meta.textContent = ''
-      fill.classList.add('error')
-      source.close()
-      state.source = null
-      state.downloadLock = false
-      setTimeout(() => {
-        actionBtn.disabled = false
-      }, 3000)
-    }
+  if (includeSavedHint) {
+    lines.push(`
+      <div class="ytg-summary-row">
+        <span class="ytg-summary-label">${escapeHtml(t('summaryDownloadsLabel'))}</span>
+        <span class="ytg-summary-value">${escapeHtml(t('successSavedHint'))}</span>
+      </div>
+    `)
   }
 
-  source.onerror = async () => {
-    source.close()
-    state.source = null
-    const isBlocked = await markIfClientBlocked(status, warning, null)
-    if (!isBlocked) {
-      warning.textContent = SERVER_DOWN_WARNING
-      warning.hidden = false
-      status.textContent = 'Connexion perdue avec le serveur'
-    }
-    fill.classList.add('error')
-    state.downloadLock = false
-    actionBtn.disabled = false
-    refreshServerStatusUI(true)
+  if (job.requestedFormat === 'mp4' && job.resolvedHeight) {
+    lines.push(`
+      <div class="ytg-summary-row">
+        <span class="ytg-summary-label">${escapeHtml(t('summaryOutputQualityLabel'))}</span>
+        <span class="ytg-summary-value">${escapeHtml(t('qualityOptionHeight', job.resolvedHeight))}</span>
+      </div>
+    `)
+  }
+
+  if (job.resolvedFormat) {
+    lines.push(`
+      <div class="ytg-summary-row">
+        <span class="ytg-summary-label">${escapeHtml(t('summaryOutputFormatLabel'))}</span>
+        <span class="ytg-summary-value">${escapeHtml(job.resolvedFormat.toUpperCase())}</span>
+      </div>
+    `)
+  }
+
+  return lines.join('')
+}
+
+function renderPanel() {
+  if (!state.panel) return
+
+  const nextServerState = getServerState()
+  const relevantJob = getRelevantActiveJob()
+  const alertText = panelAlert()
+
+  const serverState = state.panel.querySelector('#ytg-server-state')
+  serverState.classList.remove('pending', 'online', 'offline', 'unpaired')
+  serverState.classList.add(serverStateClass(nextServerState))
+  state.panel.querySelector('#ytg-server-label').textContent = serverStateLabel(nextServerState)
+
+  state.panel.querySelector('#ytg-format-section').hidden = Boolean(relevantJob)
+  const actionButton = state.panel.querySelector('#ytg-download')
+  actionButton.hidden = Boolean(relevantJob)
+  actionButton.disabled = !canStartDownload()
+
+  if (!relevantJob && nextServerState.state === 'checking') {
+    actionButton.textContent = t('downloadActionChecking')
+  } else if (!relevantJob && state.formatSelection === 'mp4' && state.qualityStatus === 'loading') {
+    actionButton.textContent = t('downloadActionLoadingQualities')
+  } else {
+    actionButton.textContent = t('downloadAction')
+  }
+
+  const alert = state.panel.querySelector('#ytg-alert')
+  if (alertText && !relevantJob) {
+    alert.hidden = false
+    alert.textContent = alertText
+  } else {
+    alert.hidden = true
+    alert.textContent = ''
+  }
+
+  renderQualityOptions()
+  renderProgress(relevantJob)
+}
+
+async function refreshPanelState(forceServerRefresh) {
+  const [serverResponse, jobResponse] = await Promise.all([
+    sendBackground(forceServerRefresh ? 'refreshServerState' : 'getServerState'),
+    sendBackground('getActiveJobState')
+  ])
+
+  if (serverResponse.ok) {
+    state.serverState = serverResponse.serverState
+  }
+  if (jobResponse.ok) {
+    state.activeJobState = jobResponse.activeJobState || null
+  }
+  state.panelErrorCode = ''
+  renderPanel()
+
+  if (!getRelevantActiveJob() && state.formatSelection === 'mp4' && getServerState().state === 'paired') {
+    await ensureQualityOptions()
   }
 }
 
-function resetPanel() {
-  if (!state.panel) return
-  const actionBtn = state.panel.querySelector('#ytg-download')
-  const fill = state.panel.querySelector('#ytg-progress-fill')
-  state.panel.querySelector('#ytg-status').textContent = 'Prêt'
-  state.panel.querySelector('#ytg-meta').textContent = ''
-  fill.style.width = '0%'
-  fill.classList.remove('done', 'error')
-  state.panel.querySelector('#ytg-progress').hidden = true
-
-  if (state.serverStatus === false) {
-    actionBtn.disabled = true
-  } else {
-    actionBtn.disabled = false
+async function ensureQualityOptions(forceRefresh = false) {
+  if (state.formatSelection !== 'mp4') return
+  const videoUrl = normalizeVideoURL(state.downloadContext?.url || location.href)
+  if (!videoUrl) {
+    state.qualityStatus = 'error'
+    state.qualityErrorCode = 'invalid_url'
+    renderPanel()
+    return
   }
+  if (!forceRefresh && state.qualityStatus === 'ready' && state.qualityRequestUrl === videoUrl) {
+    renderPanel()
+    return
+  }
+
+  state.qualityStatus = 'loading'
+  state.qualityErrorCode = ''
+  state.panelErrorCode = ''
+  state.qualityRequestUrl = videoUrl
+  const requestToken = Date.now()
+  state.qualityRequestToken = requestToken
+  renderPanel()
+
+  const response = await sendBackground('getFormatOptions', { url: videoUrl })
+  if (state.qualityRequestToken !== requestToken) return
+
+  if (!response.ok) {
+    state.qualityStatus = 'error'
+    state.qualityErrorCode = response.errorCode || 'format_probe_failed'
+    renderPanel()
+    return
+  }
+
+  if (sanitizeText(response.title)) {
+    state.downloadContext.title = sanitizeText(response.title)
+    updatePanelTitle()
+  }
+
+  state.qualityOptions = Array.isArray(response.qualityOptions) ? response.qualityOptions : []
+  if (!state.qualityOptions.some(option => option.value === state.selectedQuality)) {
+    state.selectedQuality = state.qualityOptions[0]?.value || 'best'
+  }
+  state.qualityStatus = 'ready'
+  renderPanel()
+}
+
+async function startDownloadFromPanel() {
+  if (!canStartDownload()) return
+
+  const response = await sendBackground('startDownloadJob', {
+    url: state.downloadContext?.url || location.href,
+    title: state.downloadContext?.title || getVideoTitle(),
+    requestedFormat: state.formatSelection,
+    requestedQuality: state.selectedQuality
+  })
+
+  if (!response.ok) {
+    if (response.serverState) {
+      state.serverState = response.serverState
+    }
+    if (response.activeJobState) {
+      state.activeJobState = response.activeJobState
+      state.panelErrorCode = response.errorCode || ''
+    } else {
+      state.panelErrorCode = response.errorCode || 'job_start_failed'
+    }
+    renderPanel()
+    return
+  }
+
+  state.panelErrorCode = ''
+  state.activeJobState = response.activeJobState || null
+  renderPanel()
+}
+
+async function dismissActiveJobAndClose() {
+  await sendBackground('dismissActiveJob')
+  removePanel()
+}
+
+async function dismissOrClosePanel() {
+  if (getRelevantActiveJob() && isTerminalRenderState()) {
+    await dismissActiveJobAndClose()
+    return
+  }
+  removePanel()
 }
 
 function removePanel() {
-  if (state.source) {
-    state.source.close()
-    state.source = null
-  }
-  clearTimeout(state.progressResetTimer)
-  clearInterval(state.serverStatusTimer)
-  state.serverStatusTimer = null
-
   if (state.outsideHandler) {
     document.removeEventListener('click', state.outsideHandler)
     state.outsideHandler = null
   }
 
-  if (state.panel) {
-    state.panel.remove()
-    state.panel = null
-  }
-
-  state.downloadLock = false
-  state.serverStatus = null
-  state.downloadContext = null
+  state.panel?.remove()
+  state.panel = null
   state.panelAnchorEl = null
+  state.downloadContext = null
+  state.qualityStatus = 'idle'
+  state.qualityOptions = []
+  state.qualityErrorCode = ''
+  state.panelErrorCode = ''
+  state.qualityRequestUrl = ''
 }
 
-function getVideoTitle() {
-  for (const selector of selectors) {
-    const node = document.querySelector(selector)
-    const text = node?.textContent?.trim()
-    if (text) return text
+chrome.runtime.onMessage.addListener(message => {
+  if (message?.type === 'ytg:serverStateChanged') {
+    state.serverState = message.serverState
+    renderPanel()
+    if (state.panel && !getRelevantActiveJob() && state.formatSelection === 'mp4' && getServerState().state === 'paired' && state.qualityStatus !== 'ready') {
+      void ensureQualityOptions()
+    }
+    return
   }
-  return document.title.replace(' - YouTube', '').trim()
-}
 
-function escapeHtml(value) {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
-}
+  if (message?.type === 'ytg:activeJobStateChanged') {
+    state.activeJobState = message.activeJobState || null
+    renderPanel()
+  }
+})
 
 scheduleInject()
 watchPage()

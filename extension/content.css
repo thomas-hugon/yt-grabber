@@ -16,44 +16,80 @@
   border: 0;
   border-radius: 18px;
   padding: 0 14px;
-  background: #f0a500;
+  background: linear-gradient(135deg, #f0a500, #ff7a18);
   color: #111;
-  font: 600 14px 'Roboto', 'YouTube Sans', sans-serif;
+  font: 700 14px 'Roboto', 'YouTube Sans', sans-serif;
   cursor: pointer;
-  transition: transform 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
 }
 
 #ytg-trigger:hover {
-  background: #ffb21f;
   transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(240, 165, 0, 0.32);
+  box-shadow: 0 10px 26px rgba(240, 165, 0, 0.36);
+  filter: saturate(1.08);
 }
 
-#ytg-trigger:active {
-  transform: translateY(0);
+#ytg-trigger:focus-visible,
+.ytg-lockup-btn:focus-visible,
+#ytg-panel button:focus-visible {
+  outline: 2px solid rgba(255, 202, 82, 0.95);
+  outline-offset: 2px;
 }
 
-#ytg-trigger .ytg-trigger-icon {
+#ytg-trigger .ytg-trigger-icon,
+.ytg-lockup-icon {
   display: inline-flex;
   width: 16px;
   height: 16px;
 }
 
-#ytg-trigger .ytg-trigger-icon svg {
+#ytg-trigger .ytg-trigger-icon svg,
+.ytg-lockup-icon svg {
   width: 100%;
   height: 100%;
   fill: currentColor;
 }
 
+.ytg-lockup-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+  height: 28px;
+  border: 1px solid rgba(240, 165, 0, 0.28);
+  border-radius: 999px;
+  padding: 0 10px;
+  background: linear-gradient(135deg, rgba(240, 165, 0, 0.18), rgba(255, 122, 24, 0.18));
+  color: var(--yt-spec-text-primary, #0f0f0f);
+  font: 700 12px 'Roboto', 'YouTube Sans', sans-serif;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: transform 0.14s ease, background-color 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
+}
+
+.ytg-lockup-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(240, 165, 0, 0.48);
+  box-shadow: 0 8px 18px rgba(240, 165, 0, 0.18);
+}
+
+.ytg-lockup-btn:active {
+  transform: translateY(0);
+}
+
+.ytg-lockup-label {
+  white-space: nowrap;
+}
+
 #ytg-panel {
   position: absolute;
   z-index: 99999;
-  width: 290px;
-  background: #0f0f10;
-  border: 1.5px solid #2a2a35;
-  border-radius: 12px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
-  padding: 12px;
+  width: 320px;
+  background: linear-gradient(180deg, #14151b 0%, #0d0e13 100%);
+  border: 1px solid #2b2f39;
+  border-radius: 14px;
+  box-shadow: 0 18px 56px rgba(0, 0, 0, 0.62);
+  padding: 14px;
   color: #e8e8ec;
   font-family: 'Roboto', 'YouTube Sans', sans-serif;
   animation: ytgFadeIn 0.18s ease;
@@ -73,18 +109,19 @@
 #ytg-panel .ytg-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 #ytg-panel .ytg-logo {
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
-  background: #f0a500;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #f0a500, #ff7a18);
   display: grid;
   place-items: center;
   color: #111;
+  box-shadow: 0 10px 24px rgba(240, 165, 0, 0.28);
 }
 
 #ytg-panel .ytg-logo svg {
@@ -97,17 +134,17 @@
   flex: 1;
   min-width: 0;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 #ytg-panel .ytg-close {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
   color: #bdbdc7;
   font-size: 18px;
@@ -115,12 +152,12 @@
 }
 
 #ytg-panel .ytg-close:hover {
-  background: #1a1a22;
+  background: #1d2028;
   color: #fff;
 }
 
 #ytg-panel .ytg-section {
-  margin-top: 8px;
+  margin-top: 10px;
 }
 
 #ytg-panel .ytg-label {
@@ -132,12 +169,12 @@
 .ytg-server-state {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin: 8px 0 4px;
-  padding: 7px 8px;
-  border-radius: 8px;
-  border: 1px solid #2b2c36;
-  background: #15161d;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #2c313d;
+  background: #181a22;
   font-size: 12px;
 }
 
@@ -158,6 +195,10 @@
   background: #46d47d;
 }
 
+.ytg-server-state.unpaired .dot {
+  background: #f0a500;
+}
+
 .ytg-server-state.offline .dot {
   background: #ef4d5f;
 }
@@ -167,7 +208,8 @@
   min-width: 0;
 }
 
-#ytg-server-retry {
+#ytg-server-retry,
+.ytg-inline-action {
   border: 0;
   background: transparent;
   color: #8fb5ff;
@@ -176,8 +218,9 @@
   padding: 0;
 }
 
-#ytg-server-retry:hover {
-  color: #b1ccff;
+#ytg-server-retry:hover,
+.ytg-inline-action:hover {
+  color: #c1d7ff;
   text-decoration: underline;
 }
 
@@ -189,8 +232,8 @@
 
 #ytg-panel .ytg-segment {
   display: flex;
-  background: #1a1a22;
-  border: 1px solid #2b2c36;
+  background: #1a1d25;
+  border: 1px solid #2b2f39;
   border-radius: 10px;
   overflow: hidden;
 }
@@ -200,52 +243,103 @@
   border: 0;
   background: transparent;
   color: #d2d3dd;
-  height: 32px;
+  min-height: 34px;
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
 }
 
+#ytg-panel .ytg-segment button:hover {
+  background: #242833;
+}
+
 #ytg-panel .ytg-segment button.active {
-  background: #f0a500;
+  background: linear-gradient(135deg, #f0a500, #ff7a18);
   color: #111;
   font-weight: 700;
 }
 
-#ytg-download {
-  width: 100%;
-  margin-top: 12px;
-  height: 34px;
-  border: 0;
-  border-radius: 9px;
-  background: #f0a500;
-  color: #111;
+.ytg-inline-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid #2b2f39;
+  background: #151720;
+  font-size: 12px;
+  color: #cfd2dc;
+}
+
+.ytg-inline-state.loading::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid rgba(240, 165, 0, 0.35);
+  border-top-color: #f0a500;
+  animation: ytgSpin 0.8s linear infinite;
+}
+
+.ytg-inline-state.error {
+  align-items: center;
+}
+
+@keyframes ytgSpin {
+  to { transform: rotate(360deg); }
+}
+
+#ytg-download,
+.ytg-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  border-radius: 10px;
   font: 700 13px 'Roboto', 'YouTube Sans', sans-serif;
   cursor: pointer;
 }
 
-#ytg-download:disabled {
-  opacity: 0.55;
-  cursor: default;
+#ytg-download {
+  width: 100%;
+  margin-top: 14px;
+  border: 0;
+  background: linear-gradient(135deg, #f0a500, #ff7a18);
+  color: #111;
 }
 
-#ytg-server-warning {
+#ytg-download:hover:not(:disabled) {
+  box-shadow: 0 12px 24px rgba(240, 165, 0, 0.24);
+}
+
+#ytg-download:disabled {
+  opacity: 0.45;
+  cursor: default;
+  box-shadow: none;
+}
+
+.ytg-warning {
   margin-top: 10px;
-  padding: 8px;
-  border-radius: 8px;
+  padding: 10px;
+  border-radius: 10px;
   background: rgba(241, 66, 66, 0.12);
-  border: 1px solid rgba(241, 66, 66, 0.5);
-  color: #ff9c9c;
+  border: 1px solid rgba(241, 66, 66, 0.45);
+  color: #ffb0b0;
   font-size: 12px;
+  line-height: 1.45;
 }
 
 #ytg-progress {
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 #ytg-progress .ytg-progress-bar {
   width: 100%;
-  height: 9px;
-  background: #191a22;
+  height: 10px;
+  background: #191b22;
   border-radius: 999px;
   overflow: hidden;
   border: 1px solid #2f3140;
@@ -267,13 +361,57 @@
 }
 
 #ytg-status {
-  margin-top: 8px;
-  font-size: 12px;
-  color: #d9dae3;
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ececf1;
 }
 
 #ytg-meta {
-  margin-top: 3px;
-  font-size: 11px;
-  color: #9da0ad;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #a3a7b4;
+  line-height: 1.45;
+}
+
+.ytg-summary {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.ytg-summary-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.ytg-summary-label {
+  color: #9499a8;
+}
+
+.ytg-summary-value {
+  max-width: 190px;
+  text-align: right;
+  color: #f4f5f8;
+  word-break: break-word;
+}
+
+.ytg-progress-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ytg-secondary {
+  flex: 1;
+  border: 1px solid #384154;
+  background: #191f2b;
+  color: #edf1f8;
+}
+
+.ytg-secondary:hover {
+  background: #222a38;
 }

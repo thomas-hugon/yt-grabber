@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -104,39 +106,240 @@ func TestIsAllowedOrigin(t *testing.T) {
 	}
 }
 
-func TestRequireAuth(t *testing.T) {
-	s := &server{token: "secret-token"}
+func TestPairingEndpoint(t *testing.T) {
+	t.Run("valid token", func(t *testing.T) {
+		s := newTestServer(t)
+		rec := performJSONRequest(t, s.routes(), http.MethodGet, "/pairing", nil, map[string]string{
+			"X-YTG-Token": "server-token",
+			"Origin":      "chrome-extension://abc",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var payload pairingResponse
+		decodeJSONResponse(t, rec, &payload)
+		if payload.Status != "paired" {
+			t.Fatalf("expected paired status, got %+v", payload)
+		}
+	})
 
-	okReq := httptest.NewRequest(http.MethodPost, "http://localhost/download?token=secret-token", nil)
-	okReq.Header.Set("Origin", "https://www.youtube.com")
-	okRec := httptest.NewRecorder()
-	if !s.requireAuth(okRec, okReq) {
-		t.Fatalf("expected auth to pass")
+	t.Run("missing token", func(t *testing.T) {
+		s := newTestServer(t)
+		rec := performJSONRequest(t, s.routes(), http.MethodGet, "/pairing", nil, nil)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", rec.Code)
+		}
+		if code := readErrorCode(t, rec); code != "token_missing" {
+			t.Fatalf("expected token_missing, got %q", code)
+		}
+	})
+
+	t.Run("invalid token", func(t *testing.T) {
+		s := newTestServer(t)
+		rec := performJSONRequest(t, s.routes(), http.MethodGet, "/pairing", nil, map[string]string{
+			"X-YTG-Token": "wrong-token",
+		})
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", rec.Code)
+		}
+		if code := readErrorCode(t, rec); code != "token_invalid" {
+			t.Fatalf("expected token_invalid, got %q", code)
+		}
+	})
+
+	t.Run("token not configured", func(t *testing.T) {
+		s := newServer(t.TempDir(), "")
+		rec := performJSONRequest(t, s.routes(), http.MethodGet, "/pairing", nil, map[string]string{
+			"X-YTG-Token": "server-token",
+		})
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("expected 503, got %d", rec.Code)
+		}
+		if code := readErrorCode(t, rec); code != "token_not_configured" {
+			t.Fatalf("expected token_not_configured, got %q", code)
+		}
+	})
+}
+
+func TestHandleFormats(t *testing.T) {
+	t.Run("auth failure", func(t *testing.T) {
+		s := newTestServer(t)
+		rec := performJSONRequest(t, s.routes(), http.MethodPost, "/formats", formatsRequest{
+			URL: "https://www.youtube.com/watch?v=abc123",
+		}, nil)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", rec.Code)
+		}
+	})
+
+	t.Run("invalid url", func(t *testing.T) {
+		s := newTestServer(t)
+		rec := performJSONRequest(t, s.routes(), http.MethodPost, "/formats", formatsRequest{
+			URL: "https://example.com/watch?v=abc123",
+		}, map[string]string{
+			"X-YTG-Token": "server-token",
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+		if code := readErrorCode(t, rec); code != "invalid_url" {
+			t.Fatalf("expected invalid_url, got %q", code)
+		}
+	})
+
+	t.Run("valid request", func(t *testing.T) {
+		s := newTestServer(t)
+		s.probeFormatsOverride = func(_ context.Context, _ string, videoURL string) (FormatProbeResult, error) {
+			if videoURL != "https://www.youtube.com/watch?v=abc123" {
+				t.Fatalf("unexpected video url: %q", videoURL)
+			}
+			return FormatProbeResult{
+				Title:          "Sample Video",
+				QualityOptions: []string{"best", "1080", "720"},
+			}, nil
+		}
+
+		rec := performJSONRequest(t, s.routes(), http.MethodPost, "/formats", formatsRequest{
+			URL: "https://www.youtube.com/watch?v=abc123",
+		}, map[string]string{
+			"X-YTG-Token": "server-token",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+
+		var payload formatsResponse
+		decodeJSONResponse(t, rec, &payload)
+		if fmt.Sprint(payload.QualityOptions) != fmt.Sprint([]string{"best", "1080", "720"}) {
+			t.Fatalf("unexpected quality options: %#v", payload.QualityOptions)
+		}
+	})
+}
+
+func TestParseFormatProbeResultSortsAndDedupes(t *testing.T) {
+	raw := []byte(`{
+		"title":"Me at the zoo",
+		"formats":[
+			{"height":720,"vcodec":"avc1.4d401f"},
+			{"height":1080,"vcodec":"vp9"},
+			{"height":720,"vcodec":"avc1"},
+			{"height":0,"vcodec":"none"},
+			{"height":360,"vcodec":"avc1"},
+			{"height":144,"vcodec":"none"}
+		]
+	}`)
+
+	result, err := parseFormatProbeResult(raw)
+	if err != nil {
+		t.Fatalf("parseFormatProbeResult error: %v", err)
+	}
+	if result.Title != "Me at the zoo" {
+		t.Fatalf("unexpected title: %q", result.Title)
+	}
+	want := []string{"best", "1080", "720", "360"}
+	if fmt.Sprint(result.QualityOptions) != fmt.Sprint(want) {
+		t.Fatalf("parseFormatProbeResult qualities = %v, want %v", result.QualityOptions, want)
+	}
+}
+
+func TestHandleDownloadAcceptsArbitraryNumericHeight(t *testing.T) {
+	s := newTestServer(t)
+	var captured downloadRequest
+	s.runDownloadOverride = func(_ string, req downloadRequest) {
+		captured = req
 	}
 
-	missReq := httptest.NewRequest(http.MethodPost, "http://localhost/download", nil)
-	missRec := httptest.NewRecorder()
-	if s.requireAuth(missRec, missReq) {
-		t.Fatalf("expected auth to fail without token")
+	rec := performJSONRequest(t, s.routes(), http.MethodPost, "/download", downloadRequest{
+		URL:     "https://www.youtube.com/watch?v=abc123",
+		Title:   "Demo",
+		Format:  "mp4",
+		Quality: "1440",
+	}, map[string]string{
+		"X-YTG-Token": "server-token",
+	})
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", rec.Code)
 	}
-	if missRec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", missRec.Code)
+	if captured.Quality != "1440" {
+		t.Fatalf("expected normalized quality 1440, got %q", captured.Quality)
 	}
-	if code := readErrorCode(t, missRec); code != "token_missing" {
-		t.Fatalf("expected error code token_missing, got %q", code)
+}
+
+func TestHandleJob(t *testing.T) {
+	s := newTestServer(t)
+	s.jobs["job1"] = &Job{
+		Status:           "ready",
+		Progress:         100,
+		Title:            "Demo",
+		Filename:         "demo.mp4",
+		JobToken:         "job-token-1",
+		RequestedFormat:  "mp4",
+		RequestedQuality: "720",
+		ResolvedFormat:   "mp4",
+		ResolvedHeight:   "720",
 	}
 
-	badOriginReq := httptest.NewRequest(http.MethodPost, "http://localhost/download?token=secret-token", nil)
-	badOriginReq.Header.Set("Origin", "https://evil.example.com")
-	badOriginRec := httptest.NewRecorder()
-	if s.requireAuth(badOriginRec, badOriginReq) {
-		t.Fatalf("expected auth to fail for bad origin")
+	t.Run("valid job token", func(t *testing.T) {
+		rec := performJSONRequest(t, s.routes(), http.MethodGet, "/job/job1?job_token=job-token-1", nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var payload JobSnapshot
+		decodeJSONResponse(t, rec, &payload)
+		if payload.RequestedQuality != "720" || payload.ResolvedHeight != "720" {
+			t.Fatalf("unexpected payload: %+v", payload)
+		}
+	})
+
+	t.Run("valid shared token fallback", func(t *testing.T) {
+		rec := performJSONRequest(t, s.routes(), http.MethodGet, "/job/job1", nil, map[string]string{
+			"X-YTG-Token": "server-token",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+	})
+
+	t.Run("invalid auth", func(t *testing.T) {
+		rec := performJSONRequest(t, s.routes(), http.MethodGet, "/job/job1", nil, map[string]string{
+			"X-YTG-Token": "wrong-token",
+		})
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", rec.Code)
+		}
+		if code := readErrorCode(t, rec); code != "token_invalid" {
+			t.Fatalf("expected token_invalid, got %q", code)
+		}
+	})
+}
+
+func TestParseResolvedOutputProbe(t *testing.T) {
+	mp4Payload := []byte(`{
+		"streams":[
+			{"codec_type":"video","height":720},
+			{"codec_type":"audio","height":0}
+		],
+		"format":{"format_name":"mov,mp4,m4a,3gp,3g2,mj2"}
+	}`)
+	resolved, err := parseResolvedOutputProbe(mp4Payload, "/tmp/demo.mp4")
+	if err != nil {
+		t.Fatalf("parseResolvedOutputProbe mp4 error: %v", err)
 	}
-	if badOriginRec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", badOriginRec.Code)
+	if resolved.Format != "mp4" || resolved.Height != "720" {
+		t.Fatalf("unexpected mp4 probe result: %+v", resolved)
 	}
-	if code := readErrorCode(t, badOriginRec); code != "origin_not_allowed" {
-		t.Fatalf("expected error code origin_not_allowed, got %q", code)
+
+	mp3Payload := []byte(`{
+		"streams":[{"codec_type":"audio","height":0}],
+		"format":{"format_name":"mp3"}
+	}`)
+	resolved, err = parseResolvedOutputProbe(mp3Payload, "/tmp/demo.mp3")
+	if err != nil {
+		t.Fatalf("parseResolvedOutputProbe mp3 error: %v", err)
+	}
+	if resolved.Format != "mp3" || resolved.Height != "" {
+		t.Fatalf("unexpected mp3 probe result: %+v", resolved)
 	}
 }
 
@@ -185,13 +388,6 @@ func TestFindOutputFilePrefersMostRecentMedia(t *testing.T) {
 	}
 }
 
-func writeTestFile(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("os.WriteFile(%q) error: %v", path, err)
-	}
-}
-
 func TestBuildFormatArgs(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -210,6 +406,12 @@ func TestBuildFormatArgs(t *testing.T) {
 			format:  "mp4",
 			quality: "1080",
 			want:    []string{"-f", "bestvideo[vcodec^=avc1][height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]", "--merge-output-format", "mp4"},
+		},
+		{
+			name:    "mp4_any_numeric_height",
+			format:  "mp4",
+			quality: "1440",
+			want:    []string{"-f", "bestvideo[vcodec^=avc1][height<=1440][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/best[height<=1440]", "--merge-output-format", "mp4"},
 		},
 		{
 			name:    "mp4_prefixed_quality",
@@ -301,12 +503,8 @@ func TestResolveBinaryForOS(t *testing.T) {
 }
 
 func TestRequireJobAccess(t *testing.T) {
-	s := &server{
-		token: "server-token",
-		jobs: map[string]*Job{
-			"job1": {JobToken: "job-token-1"},
-		},
-	}
+	s := newTestServer(t)
+	s.jobs["job1"] = &Job{JobToken: "job-token-1"}
 
 	okReq := httptest.NewRequest(http.MethodGet, "http://localhost/progress/job1?job_token=job-token-1", nil)
 	okRec := httptest.NewRecorder()
@@ -335,16 +533,17 @@ func TestRequireJobAccess(t *testing.T) {
 }
 
 func TestHandleProgressEmitsSSEForReadyJob(t *testing.T) {
-	s := &server{
-		jobs: map[string]*Job{
-			"job1": {
-				Status:   "ready",
-				Progress: 100,
-				Title:    "Demo",
-				Filename: "demo.mp4",
-				JobToken: "job-token-1",
-			},
-		},
+	s := newTestServer(t)
+	s.jobs["job1"] = &Job{
+		Status:           "ready",
+		Progress:         100,
+		Title:            "Demo",
+		Filename:         "demo.mp4",
+		JobToken:         "job-token-1",
+		RequestedFormat:  "mp4",
+		RequestedQuality: "720",
+		ResolvedFormat:   "mp4",
+		ResolvedHeight:   "720",
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "http://localhost/progress/job1?job_token=job-token-1", nil)
@@ -368,8 +567,8 @@ func TestHandleProgressEmitsSSEForReadyJob(t *testing.T) {
 	if !strings.Contains(body, "data: ") {
 		t.Fatalf("expected SSE body with data frame, got %q", body)
 	}
-	if !strings.Contains(body, "\"status\":\"ready\"") {
-		t.Fatalf("expected ready status in SSE payload, got %q", body)
+	if !strings.Contains(body, "\"status\":\"ready\"") || !strings.Contains(body, "\"resolved_height\":\"720\"") {
+		t.Fatalf("expected ready snapshot in SSE payload, got %q", body)
 	}
 }
 
@@ -383,15 +582,13 @@ func TestHandleFileServesAndCleansUp(t *testing.T) {
 	wantBody := "test-file-content\n"
 	writeTestFile(t, filePath, wantBody)
 
-	s := &server{
-		jobs: map[string]*Job{
-			"job1": {
-				Status:   "ready",
-				Filepath: filePath,
-				Filename: "demo.mp4",
-				JobToken: "job-token-1",
-			},
-		},
+	s := newTestServer(t)
+	s.cleanupDelay = 25 * time.Millisecond
+	s.jobs["job1"] = &Job{
+		Status:   "ready",
+		Filepath: filePath,
+		Filename: "demo.mp4",
+		JobToken: "job-token-1",
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "http://localhost/file/job1?job_token=job-token-1", nil)
@@ -409,7 +606,7 @@ func TestHandleFileServesAndCleansUp(t *testing.T) {
 		t.Fatalf("unexpected response body: got %q want %q", gotBody, wantBody)
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		_, fileErr := os.Stat(filePath)
 		_, dirErr := os.Stat(downloadDir)
@@ -421,7 +618,7 @@ func TestHandleFileServesAndCleansUp(t *testing.T) {
 		if os.IsNotExist(fileErr) && os.IsNotExist(dirErr) && !jobExists {
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(25 * time.Millisecond)
 	}
 
 	_, fileErr := os.Stat(filePath)
@@ -432,33 +629,13 @@ func TestHandleFileServesAndCleansUp(t *testing.T) {
 	t.Fatalf("cleanup did not complete in time (fileErr=%v dirErr=%v jobExists=%v)", fileErr, dirErr, jobExists)
 }
 
-func writeExecutable(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
-		t.Fatalf("os.WriteFile(%q) error: %v", path, err)
-	}
-}
-
-func readErrorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
-	t.Helper()
-	var payload map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("failed to decode error body: %v; body=%q", err, rec.Body.String())
-	}
-	code, _ := payload["code"].(string)
-	return code
-}
-
 func TestHandleFileNotReady(t *testing.T) {
-	s := &server{
-		jobs: map[string]*Job{
-			"job1": {
-				Status:   "processing",
-				Filepath: "/tmp/not-ready.mp4",
-				Filename: "not-ready.mp4",
-				JobToken: "job-token-1",
-			},
-		},
+	s := newTestServer(t)
+	s.jobs["job1"] = &Job{
+		Status:   "processing",
+		Filepath: "/tmp/not-ready.mp4",
+		Filename: "not-ready.mp4",
+		JobToken: "job-token-1",
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "http://localhost/file/job1?job_token=job-token-1", nil)
@@ -475,11 +652,8 @@ func TestHandleFileNotReady(t *testing.T) {
 }
 
 func TestSendSSEReturnsTrueWhenWriteFails(t *testing.T) {
-	s := &server{
-		jobs: map[string]*Job{
-			"job1": {Status: "downloading"},
-		},
-	}
+	s := newTestServer(t)
+	s.jobs["job1"] = &Job{Status: "downloading"}
 
 	ok := s.sendSSE(errorWriter{}, noopFlusher{}, "job1")
 	if !ok {
@@ -507,3 +681,66 @@ func (errorWriter) WriteHeader(int) {}
 type noopFlusher struct{}
 
 func (noopFlusher) Flush() {}
+
+func newTestServer(t *testing.T) *server {
+	t.Helper()
+	s := newServer(t.TempDir(), "server-token")
+	s.runDownloadOverride = func(string, downloadRequest) {}
+	return s
+}
+
+func performJSONRequest(t *testing.T, handler http.Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("json.Marshal body: %v", err)
+		}
+		reader = bytes.NewReader(raw)
+	}
+
+	req := httptest.NewRequest(method, "http://localhost"+path, reader)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func decodeJSONResponse(t *testing.T, rec *httptest.ResponseRecorder, target any) {
+	t.Helper()
+	if err := json.Unmarshal(rec.Body.Bytes(), target); err != nil {
+		t.Fatalf("failed to decode JSON response: %v body=%q", err, rec.Body.String())
+	}
+}
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(%q) error: %v", path, err)
+	}
+}
+
+func writeExecutable(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatalf("os.WriteFile(%q) error: %v", path, err)
+	}
+}
+
+func readErrorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode error body: %v; body=%q", err, rec.Body.String())
+	}
+	code, _ := payload["code"].(string)
+	return code
+}

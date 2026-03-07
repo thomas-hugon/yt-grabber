@@ -34,6 +34,7 @@ docker run --rm -v "$ROOT_DIR/extension:/src" -w /src node:20-bookworm sh -lc '
   node --check background.js &&
   node --check popup.js &&
   node --check tests/mock-server.mjs &&
+  node --check tests/locale-consistency.mjs &&
   node --check tests/smoke.mjs &&
   node --check tests/smoke-offline.mjs
 '
@@ -45,6 +46,7 @@ docker run --rm \
   -w /src/extension/tests \
   mcr.microsoft.com/playwright:v1.52.0-noble sh -lc '
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-fund --no-audit &&
+    node locale-consistency.mjs &&
     xvfb-run -a node smoke.mjs &&
     xvfb-run -a node smoke-offline.mjs
   '

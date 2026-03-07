@@ -1,9 +1,61 @@
 # YT Grabber
 
-YT Grabber is a local download stack for YouTube and other `yt-dlp`-supported sites. It ships as:
+YT Grabber is a local-first download stack for YouTube built from:
 
-- a Chrome extension (Manifest V3) that adds a **Télécharger** button on YouTube watch pages
-- a local Go server on `http://localhost:9875` that runs `yt-dlp` and streams progress over SSE
+- a Manifest V3 Chrome extension that injects download controls on supported YouTube surfaces
+- a local Go server on `http://localhost:9875` that runs `yt-dlp` plus local `ffmpeg`/`ffprobe`
+
+## Architecture
+
+The extension runtime is background-owned:
+
+- `content.js` handles YouTube DOM injection and localized UI only
+- `popup.js` manages token editing and server status UI only
+- `background.js` owns all localhost traffic:
+  - server reachability
+  - authenticated pairing checks
+  - dynamic format probing
+  - job creation
+  - `/job/{id}` polling
+  - final `chrome.downloads.download(...)` handoff
+
+The extension no longer depends on page-owned `youtube.com -> localhost` requests for normal downloads.
+
+## Supported Surfaces
+
+The extension injects controls on:
+
+- YouTube watch pages
+- search/result cards
+- related/recommendation cards and other supported video-card renderers
+
+It does not add a separate empty-state helper on YouTube home when no supported card/watch surface exists.
+
+## Popup Health States
+
+The popup distinguishes three runtime states:
+
+- `Local server offline`
+- `Pairing required`
+- `Server paired`
+
+Saving a token in the popup immediately re-runs pairing against the local server.
+
+## Dynamic Quality
+
+MP4 quality is dynamic per video:
+
+- the content UI requests available target qualities from the background
+- the background calls authenticated `POST /formats`
+- the picker shows only `best` plus the heights actually reported for that video
+- success UI shows the resolved output quality when available
+
+MP3 does not depend on MP4 format probing.
+
+## Localization
+
+The extension ships English and French locale catalogs via `chrome.i18n`.
+Manifest strings, popup UI, and content-script UI use the browser locale.
 
 ## Windows
 
@@ -11,7 +63,26 @@ YT Grabber is a local download stack for YouTube and other `yt-dlp`-supported si
 2. Run the installer.
 3. At the end of setup, follow the included Chrome extension guide.
 
-The installer deploys `YTGrabber-Server.exe`, downloads `yt-dlp.exe` and `ffmpeg.exe`, creates a Task Scheduler entry for auto-start, and launches the server.
+The installer deploys `YTGrabber-Server.exe`, downloads `yt-dlp.exe`, `ffmpeg.exe`, and `ffprobe.exe`, creates a Task Scheduler entry for auto-start, and launches the server.
+
+Windows token pairing:
+
+```powershell
+YTGrabber-Setup.exe /APITOKEN=<token>
+```
+
+Windows installer options:
+
+```powershell
+# Read token from file
+YTGrabber-Setup.exe /APITOKENFILE=C:\path\to\token.txt
+
+# Use an existing Node.js binary for yt-dlp JavaScript extraction
+YTGrabber-Setup.exe /JSRUNTIMEPATH=C:\path\to\node.exe
+
+# Download and configure a local Node.js runtime automatically (x64/arm64)
+YTGrabber-Setup.exe /DOWNLOADNODEJS=1
+```
 
 ## Linux
 
@@ -23,16 +94,15 @@ chmod +x YTGrabber-linux-installer.sh
 ./YTGrabber-linux-installer.sh ./YTGrabber-Server-linux
 ```
 
-This installs the server under `~/.local/bin`, installs `yt-dlp`, configures a systemd user service when available, and starts it.
-By default it also ensures local `ffmpeg` and `ffprobe` binaries at `~/.local/bin/ffmpeg` and `~/.local/bin/ffprobe`.
+This installs the server under `~/.local/bin`, installs `yt-dlp`, ensures local `ffmpeg` and `ffprobe`, configures a `systemd --user` service when available, and starts it.
 
 Optional Linux installer flags:
 
 ```bash
-# Use an extension-generated API token (recommended)
+# Use an extension-generated or popup-saved token
 ./YTGrabber-linux-installer.sh --api-token <token> ./YTGrabber-Server-linux
 
-# Use an existing ffmpeg from a custom location (installer will also try matching ffprobe)
+# Use an existing ffmpeg from a custom location
 ./YTGrabber-linux-installer.sh --ffmpeg-path /path/to/ffmpeg ./YTGrabber-Server-linux
 
 # Download ffmpeg + ffprobe locally for YT Grabber (x86_64)
@@ -51,35 +121,19 @@ Optional Linux installer flags:
 ./YTGrabber-linux-installer.sh --remove
 ```
 
-Then load the Chrome extension manually from the extracted extension folder.
-`--update` restarts/reloads the running service so the new binary is applied immediately.
-
-Windows token pairing:
-
-```powershell
-YTGrabber-Setup.exe /APITOKEN=<token>
-```
-
-Windows installer options:
-
-```powershell
-# Read token from file (same pairing model as Linux --api-token-file)
-YTGrabber-Setup.exe /APITOKENFILE=C:\path\to\token.txt
-
-# Use an existing Node.js binary for yt-dlp JavaScript extraction
-YTGrabber-Setup.exe /JSRUNTIMEPATH=C:\path\to\node.exe
-
-# Download and configure a local Node.js runtime automatically (x64/arm64)
-YTGrabber-Setup.exe /DOWNLOADNODEJS=1
-```
-
 ## Usage
 
-1. Open a YouTube watch page.
-2. Click **Télécharger**.
-3. Choose format/quality and start.
-4. The extension tracks progress, then hands off the file to Chrome downloads.
-5. You can open the extension popup to check server health and view the running server version.
+1. Open a supported YouTube watch/search/related surface.
+2. Click `Download`.
+3. Choose `MP4` or `MP3`.
+4. If `MP4` is selected, wait for dynamic target qualities to load and choose one.
+5. Start the download.
+6. The background worker polls the local server, then hands the finished file to browser downloads.
+7. The success state stays visible until dismissed and shows:
+   - filename
+   - Downloads-folder hint
+   - resolved output quality when available
+   - an `Open downloads` action
 
 ## Server Version
 
@@ -90,61 +144,64 @@ YTGrabber-Setup.exe /DOWNLOADNODEJS=1
 ```
 
 - API:
-  `GET http://localhost:9875/ping` returns `{"status":"ok","version":"<release-tag>","commit":"<git-sha>"}`.
 
-Version semantics:
-- `version`: human-friendly release tag (example: `v2026.03.06-10`)
-- `commit`: exact git commit SHA for traceability
+```text
+GET http://localhost:9875/ping
+```
 
-## Versioning Policy
+returns:
 
-- Repository release tag: `vYYYY.MM.DD-<run_number>` (generated by CI).
-- Server runtime version:
-  - injected at build time via `-X main.version=<tag> -X main.commit=<sha>`.
-  - must always match the release tag and source commit.
-- Extension version (`extension/manifest.json`):
-  - semver (`major.minor.patch`) and must be bumped on any shipped extension runtime/UI change.
-  - patch: fixes only, minor: backward-compatible UX/features, major: breaking UX/API behavior.
-- Windows installer version (`installer/setup.iss` `AppVersion`):
-  - should track extension major/minor and be bumped whenever installer behavior changes.
-- Linux installer script:
-  - versioned through release tags/changelog; behavior-affecting installer changes must be recorded in `CHANGELOG.md`.
-- Every release must add/update a `CHANGELOG.md` entry before tagging.
-
-## Server Logs
-
-- Log file: `<server-dir>/ytgrabber.log`
-- Rotation backend: `lumberjack` (lightweight rolling logger)
-- Max size per file: 10 MB
-- Retention: 7 days
-- Storage cap target: about 100 MB total (`1` active + up to `9` backups)
-- Old logs are rotated and pruned automatically
+```json
+{"status":"ok","version":"<release-tag>","commit":"<git-sha>"}
+```
 
 ## API Security Model
 
-- Protected endpoints (`/download`, `/progress/{id}`, `/file/{id}`) require a shared API token.
-- Extension includes this token in requests:
-  - `X-YTG-Token` header for `POST /download`
-  - `?token=...` query parameter for SSE/file URLs
-- Installer sets the server token:
-  - Linux: `--api-token` or `--api-token-file`
-  - Windows: `/APITOKEN=...`
-  - If no token is provided on update/reinstall, existing token is preserved.
+`/ping` is unauthenticated.
 
-## API Errors
+Protected shared-token endpoints:
 
-- API endpoints return JSON errors:
-  - `{"code":"<stable_error_code>","message":"<human_readable_message>"}`
-- `code` is stable for client-side handling; `message` is for logs/UI text.
+- `GET /pairing`
+- `POST /formats`
+- `POST /download`
+- fallback shared-token access to `GET /job/{id}`
 
-## Updating yt-dlp
+Job-token or shared-token access:
 
-- Windows: re-run the installer or replace `yt-dlp.exe` in the install folder.
-- Linux:
+- `GET /job/{id}`
+- `GET /progress/{id}` (legacy SSE remains available)
+- `GET /file/{id}`
+
+The popup stores the extension token locally.
+Pair the server with the same token through:
+
+- Linux installer: `--api-token` or `--api-token-file`
+- Windows installer: `/APITOKEN=` or `/APITOKENFILE=`
+
+## Local CI
+
+Use the repo parity runner:
 
 ```bash
-wget -O ~/.local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
-chmod +x ~/.local/bin/yt-dlp
+./scripts/local-ci.sh
+```
+
+What it runs:
+
+- Go formatting, vet, tests, and Linux server build in Docker
+- extension syntax checks
+- locale catalog consistency check
+- popup/content smoke tests with mocked background-owned runtime progression
+- packaging checks
+
+Direct extension smoke commands:
+
+```bash
+docker run --rm \
+  -v "$PWD/extension:/src/extension" \
+  -w /src/extension/tests \
+  mcr.microsoft.com/playwright:v1.52.0-noble \
+  sh -lc 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-fund --no-audit && node locale-consistency.mjs && node smoke.mjs && node smoke-offline.mjs'
 ```
 
 ## Build From Source
@@ -152,26 +209,8 @@ chmod +x ~/.local/bin/yt-dlp
 Requirements:
 
 - Go 1.22+
-- Inno Setup 6 (for `YTGrabber-Setup.exe`)
-- Docker (optional for reproducible local builds)
-
-## Local CI (Parity Runner)
-
-Use the single-command local CI runner to execute the same practical checks as GitHub CI in Docker:
-
-```bash
-./scripts/local-ci.sh
-```
-
-What it runs:
-- Go formatting/vet/tests + Linux server build
-- Extension syntax checks
-- Extension Playwright smoke tests (online + offline popup)
-- Packaging checks (extension zip + Linux installer bundle)
-
-Local/CI boundary:
-- Windows installer build and macOS server builds remain GitHub-runner authoritative.
-- Local parity plan details: `docs/local-ci-plan.md`.
+- Inno Setup 6 for `YTGrabber-Setup.exe`
+- Docker for reproducible local validation
 
 Build server:
 
@@ -187,30 +226,20 @@ cd extension
 zip -r ../YTGrabber-extension.zip .
 ```
 
-Extension smoke test (popup online state with mocked local server):
-
-```bash
-docker run --rm -it \
-  -v "$PWD/extension:/src/extension" \
-  -w /src/extension/tests \
-  mcr.microsoft.com/playwright:v1.52.0-noble \
-  sh -lc 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-fund --no-audit && xvfb-run -a npm run smoke'
-```
-
-Extension offline smoke test (popup offline state):
-
-```bash
-docker run --rm -it \
-  -v "$PWD/extension:/src/extension" \
-  -w /src/extension/tests \
-  mcr.microsoft.com/playwright:v1.52.0-noble \
-  sh -lc 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-fund --no-audit && xvfb-run -a npm run smoke:offline'
-```
-
 Build Windows installer on Windows:
 
 ```powershell
 & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\setup.iss
+```
+
+## Updating yt-dlp
+
+- Windows: rerun the installer or replace `yt-dlp.exe` in the install folder.
+- Linux:
+
+```bash
+wget -O ~/.local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
+chmod +x ~/.local/bin/yt-dlp
 ```
 
 ## Supported Sites

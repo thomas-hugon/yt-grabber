@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -13,12 +13,13 @@
       --muted: #a8adbc;
       --gold: #f0a500;
       --ok: #46d47d;
+      --warn: #f0a500;
       --err: #ef4d5f;
     }
 
     body {
       margin: 0;
-      width: 240px;
+      width: 260px;
       background: radial-gradient(circle at top right, #1a2030 0, #101115 45%);
       color: var(--text);
       font: 13px 'Segoe UI', system-ui, sans-serif;
@@ -36,7 +37,7 @@
       width: 30px;
       height: 30px;
       border-radius: 9px;
-      background: var(--gold);
+      background: linear-gradient(135deg, #f0a500, #ff7a18);
       display: grid;
       place-items: center;
       color: #111;
@@ -79,6 +80,12 @@
       flex: 0 0 auto;
     }
 
+    .dot.warn {
+      background: var(--warn);
+      box-shadow: none;
+      animation: none;
+    }
+
     .dot.err {
       background: var(--err);
       box-shadow: none;
@@ -96,40 +103,25 @@
       display: block;
     }
 
-    .version {
+    .version,
+    .token,
+    .pairing {
       margin-top: 8px;
       color: var(--muted);
       font-size: 12px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
       display: none;
+      line-height: 1.4;
       word-break: break-word;
     }
 
-    .version.show {
-      display: block;
-    }
-
-    .token {
-      margin-top: 8px;
-      color: var(--muted);
-      font-size: 12px;
-      display: none;
-    }
-
-    .token.show {
+    .version.show,
+    .token.show,
+    .pairing.show {
       display: block;
     }
 
     .pairing {
-      margin-top: 8px;
-      color: var(--muted);
       font-size: 11px;
-      display: none;
-      line-height: 1.35;
-    }
-
-    .pairing.show {
-      display: block;
     }
 
     .pairing a {
@@ -152,7 +144,9 @@
       cursor: pointer;
     }
 
-    #copyTokenBtn:hover {
+    #copyTokenBtn:hover,
+    #retryBtn:hover,
+    #saveTokenBtn:hover {
       background: #22283a;
     }
 
@@ -162,7 +156,8 @@
       justify-content: flex-end;
     }
 
-    #retryBtn {
+    #retryBtn,
+    #saveTokenBtn {
       border: 1px solid #3b4257;
       border-radius: 8px;
       background: #1b2030;
@@ -170,10 +165,6 @@
       font: 600 12px 'Segoe UI', system-ui, sans-serif;
       padding: 6px 10px;
       cursor: pointer;
-    }
-
-    #retryBtn:hover {
-      background: #22283a;
     }
 
     .token-editor {
@@ -206,20 +197,6 @@
       justify-content: flex-end;
     }
 
-    #saveTokenBtn {
-      border: 1px solid #3b4257;
-      border-radius: 8px;
-      background: #1b2030;
-      color: var(--text);
-      font: 600 12px 'Segoe UI', system-ui, sans-serif;
-      padding: 6px 10px;
-      cursor: pointer;
-    }
-
-    #saveTokenBtn:hover {
-      background: #22283a;
-    }
-
     #tokenEditorMsg {
       margin-top: 6px;
       color: var(--muted);
@@ -247,28 +224,33 @@
     <div class="logo" aria-hidden="true">
       <svg viewBox="0 0 24 24"><path d="M11 2h2v9h3l-4 5-4-5h3V2zm-6 17h14v2H5z"/></svg>
     </div>
-    <div class="title">YT Grabber</div>
+    <div class="title" id="popupTitle">YT Grabber</div>
   </div>
 
-  <div class="status" id="statusBox">
-    <div class="row"><span class="dot" id="dot"></span><span id="label">Vérification du serveur...</span></div>
+  <div class="status">
+    <div class="row"><span class="dot" id="dot"></span><span id="label"></span></div>
     <div class="hint" id="hint"></div>
     <div class="version" id="version"></div>
-    <div class="token" id="tokenLine">Token API: <span id="tokenValue"></span><button id="copyTokenBtn" type="button">Copier</button></div>
+    <div class="token" id="tokenLine">
+      <span id="tokenLineLabel"></span>
+      <span id="tokenValue"></span>
+      <button id="copyTokenBtn" type="button"></button>
+    </div>
     <div class="pairing" id="pairingInfo">
-      Installer: Linux `--api-token`, Windows `/APITOKEN`.
-      <a id="releaseLink" href="https://github.com/thomas-hugon/yt-grabber/releases/latest" target="_blank" rel="noopener noreferrer">Release</a>
+      <div id="pairingInstaller"></div>
+      <div id="pairingSurfaces"></div>
+      <a id="releaseLink" href="https://github.com/thomas-hugon/yt-grabber/releases/latest" target="_blank" rel="noopener noreferrer"></a>
     </div>
     <div class="token-editor">
-      <label for="tokenInput">Token API extension (64 hex)</label>
+      <label for="tokenInput" id="tokenEditorLabel"></label>
       <input id="tokenInput" type="text" spellcheck="false" autocomplete="off" />
       <div class="token-actions">
-        <button id="saveTokenBtn" type="button">Enregistrer</button>
+        <button id="saveTokenBtn" type="button"></button>
       </div>
       <div id="tokenEditorMsg"></div>
     </div>
     <div class="actions">
-      <button id="retryBtn" type="button">Re-tester</button>
+      <button id="retryBtn" type="button"></button>
     </div>
   </div>
   <script src="popup.js"></script>
