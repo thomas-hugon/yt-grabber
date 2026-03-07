@@ -156,19 +156,25 @@ cd extension
 zip -r ../YTGrabber-extension.zip .
 ```
 
-Extension smoke test (headless Chrome + mocked local server):
+Extension smoke test (popup online state with mocked local server):
 
 ```bash
 docker run --rm -it \
   -v "$PWD/extension:/src/extension" \
   -w /src/extension/tests \
   mcr.microsoft.com/playwright:v1.52.0-noble \
-  sh -lc 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-fund --no-audit && node smoke.mjs'
+  sh -lc 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-fund --no-audit && xvfb-run -a npm run smoke'
 ```
 
-Optional target override:
-`YTG_SMOKE_URL='https://www.youtube.com/watch?v=<id>'`.
-If YouTube serves a bot-check/interstitial page, the smoke test may timeout before `#ytg-trigger` appears.
+Extension offline smoke test (popup offline state):
+
+```bash
+docker run --rm -it \
+  -v "$PWD/extension:/src/extension" \
+  -w /src/extension/tests \
+  mcr.microsoft.com/playwright:v1.52.0-noble \
+  sh -lc 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-fund --no-audit && xvfb-run -a npm run smoke:offline'
+```
 
 Build Windows installer on Windows:
 

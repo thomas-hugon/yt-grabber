@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "smoke": "node smoke.mjs",
+    "smoke:offline": "node smoke-offline.mjs",
     "repro:thumbnail-mismatch": "node thumbnail-mismatch-repro.mjs"
   },
   "dependencies": {

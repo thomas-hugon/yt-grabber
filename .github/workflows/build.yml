@@ -60,6 +60,23 @@ jobs:
           node --check background.js
           node --check popup.js
 
+  e2e-extension:
+    runs-on: ubuntu-latest
+    needs: lint-extension
+    container:
+      image: mcr.microsoft.com/playwright:v1.52.0-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install extension test dependencies
+        run: |
+          cd extension/tests
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-fund --no-audit
+      - name: Run extension smoke tests
+        run: |
+          cd extension/tests
+          xvfb-run -a node smoke.mjs
+          xvfb-run -a node smoke-offline.mjs
+
   build-server-windows:
     runs-on: ubuntu-latest
     needs: [compute-version, lint-go]
@@ -121,7 +138,7 @@ jobs:
 
   build-extension:
     runs-on: ubuntu-latest
-    needs: lint-extension
+    needs: [lint-extension, e2e-extension]
     steps:
       - uses: actions/checkout@v4
       - name: Zip extension
@@ -135,7 +152,7 @@ jobs:
 
   build-linux-installer:
     runs-on: ubuntu-latest
-    needs: [build-server-linux, lint-extension]
+    needs: [build-server-linux, lint-extension, e2e-extension]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -154,7 +171,7 @@ jobs:
 
   build-windows-installer:
     runs-on: windows-latest
-    needs: [build-server-windows, lint-extension]
+    needs: [build-server-windows, lint-extension, e2e-extension]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -186,6 +203,7 @@ jobs:
       - build-server-mac
       - lint-go
       - lint-extension
+      - e2e-extension
       - build-extension
       - build-linux-installer
       - build-windows-installer

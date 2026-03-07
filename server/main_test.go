@@ -3,11 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -298,6 +300,138 @@ func TestResolveBinaryForOS(t *testing.T) {
 	}
 }
 
+func TestRequireJobAccess(t *testing.T) {
+	s := &server{
+		token: "server-token",
+		jobs: map[string]*Job{
+			"job1": {JobToken: "job-token-1"},
+		},
+	}
+
+	okReq := httptest.NewRequest(http.MethodGet, "http://localhost/progress/job1?job_token=job-token-1", nil)
+	okRec := httptest.NewRecorder()
+	if !s.requireJobAccess(okRec, okReq, "job1") {
+		t.Fatalf("expected job token auth to pass")
+	}
+
+	badReq := httptest.NewRequest(http.MethodGet, "http://localhost/progress/job1?job_token=nope", nil)
+	badRec := httptest.NewRecorder()
+	if s.requireJobAccess(badRec, badReq, "job1") {
+		t.Fatalf("expected invalid job token to fail")
+	}
+	if badRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for invalid job token, got %d", badRec.Code)
+	}
+	if code := readErrorCode(t, badRec); code != "job_token_invalid" {
+		t.Fatalf("expected error code job_token_invalid, got %q", code)
+	}
+
+	fallbackReq := httptest.NewRequest(http.MethodGet, "http://localhost/progress/job1", nil)
+	fallbackReq.Header.Set("X-YTG-Token", "server-token")
+	fallbackRec := httptest.NewRecorder()
+	if !s.requireJobAccess(fallbackRec, fallbackReq, "job1") {
+		t.Fatalf("expected fallback server token auth to pass")
+	}
+}
+
+func TestHandleProgressEmitsSSEForReadyJob(t *testing.T) {
+	s := &server{
+		jobs: map[string]*Job{
+			"job1": {
+				Status:   "ready",
+				Progress: 100,
+				Title:    "Demo",
+				Filename: "demo.mp4",
+				JobToken: "job-token-1",
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/progress/job1?job_token=job-token-1", nil)
+	req.URL.Path = "/progress/job1"
+	rec := httptest.NewRecorder()
+
+	start := time.Now()
+	s.handleProgress(rec, req)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("handleProgress took too long for ready job: %v", elapsed)
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "text/event-stream") {
+		t.Fatalf("expected text/event-stream content type, got %q", got)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "data: ") {
+		t.Fatalf("expected SSE body with data frame, got %q", body)
+	}
+	if !strings.Contains(body, "\"status\":\"ready\"") {
+		t.Fatalf("expected ready status in SSE payload, got %q", body)
+	}
+}
+
+func TestHandleFileServesAndCleansUp(t *testing.T) {
+	tmpDir := t.TempDir()
+	downloadDir := filepath.Join(tmpDir, "job-data")
+	if err := os.MkdirAll(downloadDir, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(downloadDir) error: %v", err)
+	}
+	filePath := filepath.Join(downloadDir, "demo.mp4")
+	wantBody := "test-file-content\n"
+	writeTestFile(t, filePath, wantBody)
+
+	s := &server{
+		jobs: map[string]*Job{
+			"job1": {
+				Status:   "ready",
+				Filepath: filePath,
+				Filename: "demo.mp4",
+				JobToken: "job-token-1",
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/file/job1?job_token=job-token-1", nil)
+	req.URL.Path = "/file/job1"
+	rec := httptest.NewRecorder()
+	s.handleFile(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Disposition"); !strings.Contains(got, "attachment; filename*=UTF-8''demo.mp4") {
+		t.Fatalf("unexpected Content-Disposition header: %q", got)
+	}
+	if gotBody := rec.Body.String(); gotBody != wantBody {
+		t.Fatalf("unexpected response body: got %q want %q", gotBody, wantBody)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		_, fileErr := os.Stat(filePath)
+		_, dirErr := os.Stat(downloadDir)
+
+		s.mu.RLock()
+		_, jobExists := s.jobs["job1"]
+		s.mu.RUnlock()
+
+		if os.IsNotExist(fileErr) && os.IsNotExist(dirErr) && !jobExists {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	_, fileErr := os.Stat(filePath)
+	_, dirErr := os.Stat(downloadDir)
+	s.mu.RLock()
+	_, jobExists := s.jobs["job1"]
+	s.mu.RUnlock()
+	t.Fatalf("cleanup did not complete in time (fileErr=%v dirErr=%v jobExists=%v)", fileErr, dirErr, jobExists)
+}
+
 func writeExecutable(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
@@ -314,3 +448,62 @@ func readErrorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 	code, _ := payload["code"].(string)
 	return code
 }
+
+func TestHandleFileNotReady(t *testing.T) {
+	s := &server{
+		jobs: map[string]*Job{
+			"job1": {
+				Status:   "processing",
+				Filepath: "/tmp/not-ready.mp4",
+				Filename: "not-ready.mp4",
+				JobToken: "job-token-1",
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/file/job1?job_token=job-token-1", nil)
+	req.URL.Path = "/file/job1"
+	rec := httptest.NewRecorder()
+	s.handleFile(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", rec.Code)
+	}
+	if code := readErrorCode(t, rec); code != "file_not_ready" {
+		t.Fatalf("expected error code file_not_ready, got %q", code)
+	}
+}
+
+func TestSendSSEReturnsTrueWhenWriteFails(t *testing.T) {
+	s := &server{
+		jobs: map[string]*Job{
+			"job1": {Status: "downloading"},
+		},
+	}
+
+	ok := s.sendSSE(errorWriter{}, noopFlusher{}, "job1")
+	if !ok {
+		t.Fatalf("expected sendSSE to return true on write failure")
+	}
+}
+
+type errorWriter struct {
+	header http.Header
+}
+
+func (w errorWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (errorWriter) Write([]byte) (int, error) {
+	return 0, io.ErrClosedPipe
+}
+
+func (errorWriter) WriteHeader(int) {}
+
+type noopFlusher struct{}
+
+func (noopFlusher) Flush() {}

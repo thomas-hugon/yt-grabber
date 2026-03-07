@@ -2,12 +2,11 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
-import { createMockServer } from './mock-server.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const extensionDir = path.resolve(__dirname, '..')
-const userDataDir = path.resolve(__dirname, '.tmp-smoke-profile')
+const userDataDir = path.resolve(__dirname, '.tmp-smoke-offline-profile')
 
 async function resolveExtensionId(context) {
   let worker = context.serviceWorkers()[0]
@@ -22,8 +21,6 @@ async function resolveExtensionId(context) {
 }
 
 async function run() {
-  const mock = createMockServer()
-  await mock.start(9875)
   await fs.rm(userDataDir, { recursive: true, force: true })
 
   const context = await chromium.launchPersistentContext(userDataDir, {
@@ -41,25 +38,17 @@ async function run() {
 
     await page.waitForFunction(() => {
       const label = document.querySelector('#label')
-      return label?.textContent?.includes('Serveur actif - localhost:9875') === true
-    }, { timeout: 10000 })
+      return label?.textContent?.includes('Serveur introuvable') === true
+    }, { timeout: 12000 })
 
-    const versionLine = await page.locator('#version').innerText()
-    if (!versionLine.includes('v-smoke')) {
-      throw new Error(`Smoke failed: popup version line missing mock version, got: ${versionLine}`)
+    const hint = await page.locator('#hint').innerText()
+    if (!hint.includes('systemctl --user start ytgrabber')) {
+      throw new Error(`Smoke offline failed: missing troubleshooting hint, got: ${hint}`)
     }
 
-    const tokenText = (await page.locator('#tokenValue').innerText()).trim()
-    if (!/^[a-f0-9]{64}$/i.test(tokenText)) {
-      throw new Error(`Smoke failed: invalid token format in popup (${tokenText})`)
-    }
-
-    console.log('Smoke OK')
-    console.log(`popupVersion=${versionLine}`)
-    console.log(`tokenPreview=${tokenText.slice(0, 8)}...`)
+    console.log('Smoke offline OK')
   } finally {
     await context.close().catch(() => {})
-    await mock.stop().catch(() => {})
   }
 }
 
