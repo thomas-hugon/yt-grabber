@@ -22,6 +22,7 @@ Source: "install-extension.html"; DestDir: "{app}"; Flags: ignoreversion
 Source: "download-yt-dlp.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "download-ffmpeg.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "write-token.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "configure-ytdlp-runtime.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Guide d'installation de l'extension Chrome"; Filename: "{app}\install-extension.html"
@@ -30,19 +31,24 @@ Name: "{group}\Désinstaller YT Grabber"; Filename: "{uninstallexe}"
 [Run]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\download-yt-dlp.ps1"" -AppDir ""{app}"""; StatusMsg: "Téléchargement de yt-dlp..."; Flags: runhidden waituntilterminated
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\download-ffmpeg.ps1"" -AppDir ""{app}"""; StatusMsg: "Téléchargement de ffmpeg..."; Flags: runhidden waituntilterminated
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\write-token.ps1"" -AppDir ""{app}"" -ApiToken ""{param:APITOKEN|}"""; StatusMsg: "Configuration du token API..."; Flags: runhidden waituntilterminated
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\write-token.ps1"" -AppDir ""{app}"" -ApiToken ""{param:APITOKEN|}"" -ApiTokenFile ""{param:APITOKENFILE|}"""; StatusMsg: "Configuration du token API..."; Flags: runhidden waituntilterminated
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\configure-ytdlp-runtime.ps1"" -AppDir ""{app}"" -JsRuntimePath ""{param:JSRUNTIMEPATH|}"" -DownloadNodeJs ""{param:DOWNLOADNODEJS|}"""; StatusMsg: "Configuration du runtime JavaScript yt-dlp..."; Flags: runhidden waituntilterminated
 Filename: "schtasks.exe"; Parameters: "/Create /TN ""YTGrabber"" /TR ""{app}\YTGrabber-Server.exe"" /SC ONLOGON /DELAY 0001:00 /RL HIGHEST /F"; Flags: runhidden waituntilterminated
+Filename: "cmd.exe"; Parameters: "/C taskkill /IM YTGrabber-Server.exe /F >nul 2>&1 || exit /b 0"; Flags: runhidden waituntilterminated
 Filename: "{app}\YTGrabber-Server.exe"; Flags: nowait postinstall runhidden
 Filename: "{app}\install-extension.html"; Flags: shellexec postinstall skipifsilent; Description: "Ouvrir le guide d'installation de l'extension Chrome"
 
 [UninstallRun]
 Filename: "schtasks.exe"; Parameters: "/End /TN ""YTGrabber"""; Flags: runhidden
 Filename: "schtasks.exe"; Parameters: "/Delete /TN ""YTGrabber"" /F"; Flags: runhidden
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\configure-ytdlp-runtime.ps1"" -AppDir ""{app}"" -RemoveOnly ""1"""; Flags: runhidden waituntilterminated
 Filename: "taskkill.exe"; Parameters: "/IM YTGrabber-Server.exe /F"; Flags: runhidden
 
 [UninstallDelete]
 Type: files; Name: "{app}\yt-dlp.exe"
 Type: files; Name: "{app}\ffmpeg.exe"
+Type: files; Name: "{app}\ffprobe.exe"
+Type: files; Name: "{app}\ytg-nodejs.exe"
 Type: files; Name: "{app}\ytgrabber.token"
 Type: files; Name: "{app}\ytgrabber.log"
 Type: filesandordirs; Name: "{app}"
@@ -54,5 +60,9 @@ begin
   begin
     if not FileExists(ExpandConstant('{app}\yt-dlp.exe')) then
       MsgBox('yt-dlp.exe est introuvable. Téléchargez-le manuellement depuis https://github.com/yt-dlp/yt-dlp/releases et copiez-le dans le dossier d''installation.', mbError, MB_OK);
+    if not FileExists(ExpandConstant('{app}\ffmpeg.exe')) then
+      MsgBox('ffmpeg.exe est introuvable. Relancez l''installeur ou copiez ffmpeg.exe dans le dossier d''installation.', mbError, MB_OK);
+    if not FileExists(ExpandConstant('{app}\ffprobe.exe')) then
+      MsgBox('ffprobe.exe est introuvable. Relancez l''installeur ou copiez ffprobe.exe dans le dossier d''installation.', mbError, MB_OK);
   end;
 end;

@@ -60,6 +60,19 @@ Windows token pairing:
 YTGrabber-Setup.exe /APITOKEN=<token>
 ```
 
+Windows installer options:
+
+```powershell
+# Read token from file (same pairing model as Linux --api-token-file)
+YTGrabber-Setup.exe /APITOKENFILE=C:\path\to\token.txt
+
+# Use an existing Node.js binary for yt-dlp JavaScript extraction
+YTGrabber-Setup.exe /JSRUNTIMEPATH=C:\path\to\node.exe
+
+# Download and configure a local Node.js runtime automatically (x64/arm64)
+YTGrabber-Setup.exe /DOWNLOADNODEJS=1
+```
+
 ## Usage
 
 1. Open a YouTube watch page.
@@ -141,6 +154,24 @@ Requirements:
 - Go 1.22+
 - Inno Setup 6 (for `YTGrabber-Setup.exe`)
 - Docker (optional for reproducible local builds)
+
+## Local CI (Parity Runner)
+
+Use the single-command local CI runner to execute the same practical checks as GitHub CI in Docker:
+
+```bash
+./scripts/local-ci.sh
+```
+
+What it runs:
+- Go formatting/vet/tests + Linux server build
+- Extension syntax checks
+- Extension Playwright smoke tests (online + offline popup)
+- Packaging checks (extension zip + Linux installer bundle)
+
+Local/CI boundary:
+- Windows installer build and macOS server builds remain GitHub-runner authoritative.
+- Local parity plan details: `docs/local-ci-plan.md`.
 
 Build server:
 

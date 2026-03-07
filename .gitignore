@@ -7,3 +7,4 @@ __pycache__/
 YTGrabber-Server-linux
 YTGrabber-Server-mac-*
 extension/tests/node_modules/
+.tmp/
