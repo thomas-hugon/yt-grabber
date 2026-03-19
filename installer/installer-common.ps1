@@ -111,7 +111,18 @@ function New-InstallerTempPath {
     [string]$Name
   )
 
-  return Join-Path $AppDir ("." + $Name + "." + [Guid]::NewGuid().ToString("N") + ".tmp")
+  $extension = [System.IO.Path]::GetExtension($Name)
+  $stem = if ([string]::IsNullOrWhiteSpace($extension)) {
+    $Name
+  } else {
+    [System.IO.Path]::GetFileNameWithoutExtension($Name)
+  }
+
+  if ([string]::IsNullOrWhiteSpace($extension)) {
+    $extension = ".tmp"
+  }
+
+  return Join-Path $AppDir ("." + $stem + "." + [Guid]::NewGuid().ToString("N") + $extension)
 }
 
 function Test-UsableFile {
