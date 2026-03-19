@@ -184,7 +184,7 @@ try {
   $localVersion = Normalize-Version -Value (Get-CommandVersionString -Path $destPath)
   $currentStateMatches = $false
 
-  if ($previousState -is [hashtable]) {
+  if ($previousState -is [System.Collections.IDictionary]) {
     $stateVersion = Normalize-Version -Value $previousState["version"]
     $stateSha = Normalize-Version -Value $previousState["sha256"]
     $currentStateMatches = $hadExistingBinary -and ($stateVersion -eq $latestVersion) -and ($stateSha.ToLowerInvariant() -eq $expectedSha)

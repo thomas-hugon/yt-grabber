@@ -333,7 +333,7 @@ try {
   }
 
   $stateMatches = $false
-  if (($previousState -is [hashtable]) -and $managedExisting) {
+  if (($previousState -is [System.Collections.IDictionary]) -and $managedExisting) {
     $stateVersion = [string]$previousState["version"]
     $stateArchiveKind = [string]$previousState["archive_kind"]
     $stateSha = [string]$previousState["sha256"]

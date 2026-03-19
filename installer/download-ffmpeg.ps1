@@ -223,7 +223,7 @@ try {
   $hasUsablePair = (Test-UsableFile -Path $ffmpegDest) -and (Test-UsableFile -Path $ffprobeDest)
   $currentStateMatches = $false
 
-  if (($previousState -is [hashtable]) -and $hasUsablePair) {
+  if (($previousState -is [System.Collections.IDictionary]) -and $hasUsablePair) {
     $stateReleaseId = Normalize-Text $previousState["release_id"]
     $stateAssetName = Normalize-Text $previousState["asset_name"]
     $stateArch = Normalize-Text $previousState["asset_arch"]
