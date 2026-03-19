@@ -34,6 +34,7 @@ docker run --rm -v "$ROOT_DIR/extension:/src" -w /src node:20-bookworm sh -lc '
   node --check content.js &&
   node --check background.js &&
   node --check popup.js &&
+  node --check tests/background-active-job.mjs &&
   node --check tests/background-format-options.mjs &&
   node --check tests/mock-server.mjs &&
   node --check tests/locale-consistency.mjs &&
@@ -43,6 +44,7 @@ docker run --rm -v "$ROOT_DIR/extension:/src" -w /src node:20-bookworm sh -lc '
 
 log "Extension background behavior checks"
 docker run --rm -v "$ROOT_DIR/extension:/src" -w /src node:20-bookworm sh -lc '
+  node tests/background-active-job.mjs &&
   node tests/background-format-options.mjs
 '
 

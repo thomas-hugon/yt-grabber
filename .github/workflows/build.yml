@@ -74,6 +74,8 @@ jobs:
       - name: Run extension smoke tests
         run: |
           cd extension/tests
+          node background-active-job.mjs
+          node background-format-options.mjs
           xvfb-run -a node smoke.mjs
           xvfb-run -a node smoke-offline.mjs
 
@@ -169,9 +171,21 @@ jobs:
           name: linux-installer
           path: dist/*
 
+  test-windows-installer-scripts:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run Windows installer helper tests
+        shell: powershell
+        run: |
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File installer\tests\windows-installer-script-tests.ps1
+
   build-windows-installer:
     runs-on: windows-latest
-    needs: [build-server-windows, lint-extension, e2e-extension]
+    needs: [build-server-windows, lint-extension, e2e-extension, test-windows-installer-scripts]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4

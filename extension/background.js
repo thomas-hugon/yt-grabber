@@ -71,6 +71,25 @@ function isTerminalStatus(status) {
   return status === 'ready' || status === 'error'
 }
 
+function buildActiveJobStateFromPayload(job, payload) {
+  return sanitizeActiveJobState({
+    ...job,
+    status: sanitizeString(payload?.status) || job.status,
+    progress: Number(payload?.progress),
+    speed: payload?.speed,
+    eta: payload?.eta,
+    title: payload?.title || job.title,
+    filename: payload?.filename,
+    error: payload?.error,
+    requestedFormat: payload?.requested_format || job.requestedFormat,
+    requestedQuality: payload?.requested_quality || job.requestedQuality,
+    resolvedFormat: payload?.resolved_format,
+    resolvedHeight: payload?.resolved_height,
+    errorCode: sanitizeString(payload?.error) ? 'job_failed' : '',
+    updatedAt: Date.now()
+  })
+}
+
 function normalizeQualityOptions(values) {
   const seen = new Set()
   const options = []
@@ -177,6 +196,11 @@ async function persistActiveJobState() {
     return
   }
   await chrome.storage.local.set({ [ACTIVE_JOB_KEY]: activeJobState })
+}
+
+async function clearActiveJobState() {
+  clearTimeout(jobPollTimer)
+  return setActiveJobState(null)
 }
 
 async function queryYouTubeTabs() {
@@ -433,31 +457,20 @@ async function pollActiveJob() {
   try {
     const result = await fetchJSON(`/job/${activeJobState.jobId}?job_token=${encodeURIComponent(activeJobState.jobToken)}`)
     if (!result.ok) {
+      const errorCode = sanitizeString(result.payload?.code)
+      if (result.status === 404 || errorCode === 'job_not_found' || errorCode === 'job_token_invalid') {
+        await clearActiveJobState()
+        return
+      }
       if (result.status === 0) {
         await failActiveJob('polling_failed')
         return
       }
-      await failActiveJob(sanitizeString(result.payload?.code) || 'polling_failed')
+      await failActiveJob(errorCode || 'polling_failed')
       return
     }
 
-    const nextJobState = sanitizeActiveJobState({
-      ...activeJobState,
-      status: sanitizeString(result.payload?.status) || activeJobState.status,
-      progress: Number(result.payload?.progress),
-      speed: result.payload?.speed,
-      eta: result.payload?.eta,
-      title: result.payload?.title || activeJobState.title,
-      filename: result.payload?.filename,
-      error: result.payload?.error,
-      requestedFormat: result.payload?.requested_format || activeJobState.requestedFormat,
-      requestedQuality: result.payload?.requested_quality || activeJobState.requestedQuality,
-      resolvedFormat: result.payload?.resolved_format,
-      resolvedHeight: result.payload?.resolved_height,
-      errorCode: sanitizeString(result.payload?.error) ? 'job_failed' : '',
-      updatedAt: Date.now()
-    })
-
+    const nextJobState = buildActiveJobStateFromPayload(activeJobState, result.payload)
     await setActiveJobState(nextJobState)
 
     if (nextJobState.status === 'ready') {
@@ -472,6 +485,51 @@ async function pollActiveJob() {
   } finally {
     jobPollInFlight = false
   }
+}
+
+async function revalidateActiveJobState(options = {}) {
+  await ensureActiveJobLoaded()
+  if (!activeJobState) {
+    return { activeJobState: null, state: 'missing' }
+  }
+
+  if (isTerminalStatus(activeJobState.status)) {
+    if (options.clearTerminal) {
+      await clearActiveJobState()
+      return { activeJobState: null, state: 'cleared_terminal' }
+    }
+    return { activeJobState, state: 'terminal' }
+  }
+
+  const result = await fetchJSON(`/job/${activeJobState.jobId}?job_token=${encodeURIComponent(activeJobState.jobToken)}`)
+  if (!result.ok) {
+    const errorCode = sanitizeString(result.payload?.code)
+    if (result.status === 404 || errorCode === 'job_not_found' || errorCode === 'job_token_invalid') {
+      await clearActiveJobState()
+      return { activeJobState: null, state: 'cleared_stale' }
+    }
+    return {
+      activeJobState,
+      state: 'unverified',
+      errorCode: errorCode || 'polling_failed'
+    }
+  }
+
+  const nextJobState = buildActiveJobStateFromPayload(activeJobState, result.payload)
+  await setActiveJobState(nextJobState)
+
+  if (isTerminalStatus(nextJobState.status)) {
+    if (options.clearTerminal) {
+      await clearActiveJobState()
+      return { activeJobState: null, state: 'cleared_terminal' }
+    }
+    return { activeJobState: nextJobState, state: 'terminal' }
+  }
+
+  if (options.schedulePollOnActive !== false) {
+    scheduleJobPoll(0)
+  }
+  return { activeJobState: nextJobState, state: 'active' }
 }
 
 async function getFormatOptions(videoUrl) {
@@ -546,12 +604,15 @@ async function getFormatOptions(videoUrl) {
 }
 
 async function startDownloadJob(message, sender) {
-  await ensureActiveJobLoaded()
-  if (activeJobState) {
+  const revalidated = await revalidateActiveJobState({
+    clearTerminal: true,
+    schedulePollOnActive: true
+  })
+  if (revalidated.activeJobState) {
     return {
       ok: false,
-      errorCode: isTerminalStatus(activeJobState.status) ? 'job_requires_dismissal' : 'job_already_active',
-      activeJobState
+      errorCode: 'job_already_active',
+      activeJobState: revalidated.activeJobState
     }
   }
 
@@ -633,8 +694,7 @@ async function startDownloadJob(message, sender) {
 }
 
 async function dismissActiveJob() {
-  clearTimeout(jobPollTimer)
-  await setActiveJobState(null)
+  await clearActiveJobState()
   return { ok: true }
 }
 
@@ -658,7 +718,10 @@ async function initialize() {
   applyActionStatus(DEFAULT_SERVER_STATE)
   await ensureActiveJobLoaded()
   if (activeJobState && !isTerminalStatus(activeJobState.status)) {
-    scheduleJobPoll(0)
+    await revalidateActiveJobState({
+      clearTerminal: false,
+      schedulePollOnActive: true
+    })
   }
 }
 
@@ -728,7 +791,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'getActiveJobState') {
       await ensureActiveJobLoaded()
       if (activeJobState && !isTerminalStatus(activeJobState.status)) {
-        scheduleJobPoll(0)
+        const revalidated = await revalidateActiveJobState({
+          clearTerminal: false,
+          schedulePollOnActive: true
+        })
+        sendResponse({ ok: true, activeJobState: revalidated.activeJobState })
+        return
       }
       sendResponse({ ok: true, activeJobState })
       return

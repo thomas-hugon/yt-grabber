@@ -61,9 +61,13 @@ Manifest strings, popup UI, and content-script UI use the browser locale.
 
 1. Download `YTGrabber-Setup.exe` from the GitHub Releases page.
 2. Run the installer.
-3. At the end of setup, follow the included Chrome extension guide.
+3. On a fresh install, follow the included Chrome extension guide at the end of setup.
 
-The installer deploys `YTGrabber-Server.exe`, downloads `yt-dlp.exe`, `ffmpeg.exe`, and `ffprobe.exe`, creates a Task Scheduler entry for auto-start, and launches the server.
+The installer auto-detects `install` vs `update` from the target folder. On a fresh install it deploys `YTGrabber-Server.exe`, downloads `yt-dlp.exe`, installs an architecture-matching local `ffmpeg.exe` + `ffprobe.exe`, registers a per-user logon auto-start task, and launches the server.
+
+On an update, rerunning `YTGrabber-Setup.exe` replaces the server in place, preserves the existing API token by default, refreshes `yt-dlp` / `ffmpeg` / `ffprobe` only when needed, re-registers the auto-start task, and relaunches the server. Dependency refreshes are best effort: if a tool download fails, the installer keeps the existing local binary when possible and still completes the server update with a warning summary.
+
+The Chrome extension guide opens only on a fresh install, not on updates.
 
 Windows token pairing:
 
@@ -83,6 +87,11 @@ YTGrabber-Setup.exe /JSRUNTIMEPATH=C:\path\to\node.exe
 # Download and configure a local Node.js runtime automatically (x64/arm64)
 YTGrabber-Setup.exe /DOWNLOADNODEJS=1
 ```
+
+Node.js runtime update behavior on Windows:
+
+- If `ytg-nodejs.exe` is already managed by YT Grabber, a rerun of the installer may refresh it best-effort during update.
+- If you are not already using the managed runtime, updates leave external `yt-dlp` JavaScript runtime configuration alone unless you explicitly pass `/JSRUNTIMEPATH=` or `/DOWNLOADNODEJS=1`.
 
 ## Linux
 
@@ -129,11 +138,12 @@ Optional Linux installer flags:
 4. If `MP4` is selected, wait for dynamic target qualities to load and choose one.
 5. Start the download.
 6. The background worker polls the local server, then hands the finished file to browser downloads.
-7. The success state stays visible until dismissed and shows:
+7. The success state stays visible until dismissed during the current session and shows:
    - filename
    - Downloads-folder hint
    - resolved output quality when available
    - an `Open downloads` action
+   - starting a new download no longer requires manually dismissing an older completed/failed result first
 
 ## Server Version
 
@@ -190,6 +200,7 @@ What it runs:
 
 - Go formatting, vet, tests, and Linux server build in Docker
 - extension syntax checks
+- extension background-state reconciliation checks
 - locale catalog consistency check
 - popup/content smoke tests with mocked background-owned runtime progression
 - packaging checks
@@ -201,7 +212,7 @@ docker run --rm \
   -v "$PWD/extension:/src/extension" \
   -w /src/extension/tests \
   mcr.microsoft.com/playwright:v1.52.0-noble \
-  sh -lc 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-fund --no-audit && node locale-consistency.mjs && node smoke.mjs && node smoke-offline.mjs'
+  sh -lc 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-fund --no-audit && node background-active-job.mjs && node background-format-options.mjs && node locale-consistency.mjs && node smoke.mjs && node smoke-offline.mjs'
 ```
 
 ## Build From Source
@@ -234,7 +245,7 @@ Build Windows installer on Windows:
 
 ## Updating yt-dlp
 
-- Windows: rerun the installer or replace `yt-dlp.exe` in the install folder.
+- Windows: rerun the installer. It will keep the current managed `yt-dlp.exe` when it is already up to date, refresh it best-effort otherwise, and still complete the server update if the refresh fails.
 - Linux:
 
 ```bash
