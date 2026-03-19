@@ -34,6 +34,13 @@ function buildSearchPageHtml() {
         </div>
         <div id="menu"></div>
       </ytd-video-renderer>
+      <ytd-video-renderer id="search-card-copy">
+        <a id="thumbnail" href="/watch?v=search123">thumb</a>
+        <div id="details">
+          <a id="video-title" href="/watch?v=search123">Search Result Demo Copy</a>
+        </div>
+        <div id="menu"></div>
+      </ytd-video-renderer>
       <script>
         window.previewCounts = { pointerdown: 0, mousedown: 0, click: 0 }
         const card = document.getElementById('search-card')
@@ -121,15 +128,16 @@ async function installChromeMock(page, messages, scenario) {
 
       function scheduleJobSequence() {
         state.jobSequence.forEach((step, index) => {
+          const { delayMs, ...patch } = step
           setTimeout(() => {
             state.activeJobState = {
               ...state.activeJobState,
-              ...step,
-              downloadState: step.status === 'ready' ? 'accepted' : state.activeJobState.downloadState,
+              ...patch,
+              downloadState: patch.status === 'ready' ? 'accepted' : state.activeJobState.downloadState,
               updatedAt: Date.now()
             }
             broadcast({ type: 'ytg:activeJobStateChanged', activeJobState: state.activeJobState })
-          }, 80 * (index + 1))
+          }, Number.isFinite(delayMs) ? delayMs : 80 * (index + 1))
         })
       }
 
@@ -241,6 +249,17 @@ async function waitForText(page, selector, expected, timeout = 12000) {
   )
 }
 
+async function waitForButtonState(page, selector, expectedText, expectedClass, timeout = 12000) {
+  await page.waitForFunction(
+    ({ innerSelector, innerText, className }) => {
+      const node = document.querySelector(innerSelector)
+      return node?.textContent?.includes(innerText) === true && node?.classList?.contains(className) === true
+    },
+    { innerSelector: selector, innerText: expectedText, className: expectedClass },
+    { timeout }
+  )
+}
+
 async function runPopupScenario(browser, messages, popupHtml, popupScript) {
   const page = await browser.newPage()
   const scenario = {
@@ -291,6 +310,7 @@ async function runWatchScenario(browser, messages, contentScript) {
     },
     jobSequence: [
       {
+        delayMs: 250,
         status: 'downloading',
         progress: 44.2,
         speed: '2.8MiB/s',
@@ -304,6 +324,7 @@ async function runWatchScenario(browser, messages, contentScript) {
         resolvedHeight: ''
       },
       {
+        delayMs: 650,
         status: 'processing',
         progress: 100,
         speed: '',
@@ -317,6 +338,7 @@ async function runWatchScenario(browser, messages, contentScript) {
         resolvedHeight: ''
       },
       {
+        delayMs: 1050,
         status: 'ready',
         progress: 100,
         speed: '',
@@ -346,8 +368,13 @@ async function runWatchScenario(browser, messages, contentScript) {
 
   await page.locator('#ytg-quality-content button', { hasText: '720p' }).click()
   await page.locator('#ytg-download').click()
+  await waitForButtonState(page, '#ytg-trigger', 'Downloading MP4', 'is-busy')
+  await page.locator('#ytg-close').click()
+  await page.waitForFunction(() => !document.querySelector('#ytg-panel'), { timeout: 8000 })
+  await waitForButtonState(page, '#ytg-trigger', 'MP4 saved', 'is-done')
+
+  await page.locator('#ytg-trigger').click()
   await waitForText(page, '#ytg-status', 'Saved to Downloads')
-  await page.waitForTimeout(1600)
 
   if (!(await page.locator('#ytg-panel').isVisible())) {
     throw new Error('Watch flow failed: success panel auto-dismissed')
@@ -376,6 +403,7 @@ async function runWatchScenario(browser, messages, contentScript) {
 
   await page.locator('#ytg-dismiss').click()
   await page.waitForFunction(() => !document.querySelector('#ytg-panel'), { timeout: 8000 })
+  await waitForText(page, '#ytg-trigger', 'Download')
 }
 
 async function runSearchScenario(browser, messages, contentScript) {
@@ -392,6 +420,7 @@ async function runSearchScenario(browser, messages, contentScript) {
     formatFailure: { code: 'format_probe_failed' },
     jobSequence: [
       {
+        delayMs: 250,
         status: 'downloading',
         progress: 61.4,
         speed: '1.3MiB/s',
@@ -405,6 +434,7 @@ async function runSearchScenario(browser, messages, contentScript) {
         resolvedHeight: ''
       },
       {
+        delayMs: 800,
         status: 'ready',
         progress: 100,
         speed: '',
@@ -428,12 +458,19 @@ async function runSearchScenario(browser, messages, contentScript) {
   await page.addScriptTag({ content: contentScript })
 
   await page.waitForSelector('.ytg-lockup-btn', { timeout: 12000 })
-  await page.locator('.ytg-lockup-btn').click()
+  await page.waitForFunction(() => document.querySelectorAll('.ytg-lockup-btn').length === 2, { timeout: 12000 })
+  await page.locator('#search-card .ytg-lockup-btn').click()
   await waitForText(page, '#ytg-alert', 'could not inspect')
 
   const previewCounts = await page.evaluate(() => window.previewCounts)
   if (previewCounts.pointerdown !== 0 || previewCounts.mousedown !== 0 || previewCounts.click !== 0) {
     throw new Error(`Search card suppression failed: ${JSON.stringify(previewCounts)}`)
+  }
+
+  const searchButtons = page.locator('.ytg-lockup-btn')
+  const searchButtonCount = await searchButtons.count()
+  if (searchButtonCount !== 2) {
+    throw new Error(`Search flow failed: expected 2 injected card buttons, got ${searchButtonCount}`)
   }
 
   await page.locator('#ytg-format-options button', { hasText: 'MP3' }).click()
@@ -444,7 +481,11 @@ async function runSearchScenario(browser, messages, contentScript) {
   }, { timeout: 8000 })
 
   await page.locator('#ytg-download').click()
+  await waitForButtonState(page, '#search-card .ytg-lockup-btn', 'MP3…', 'is-busy')
+  await waitForButtonState(page, '#search-card-copy .ytg-lockup-btn', 'MP3…', 'is-busy')
   await waitForText(page, '#ytg-status', 'Saved to Downloads')
+  await waitForButtonState(page, '#search-card .ytg-lockup-btn', 'MP3 ok', 'is-done')
+  await waitForButtonState(page, '#search-card-copy .ytg-lockup-btn', 'MP3 ok', 'is-done')
 
   const summary = await page.locator('#ytg-summary').innerText()
   if (!summary.includes('search-flow.mp3') || summary.includes('Output quality')) {
@@ -455,6 +496,11 @@ async function runSearchScenario(browser, messages, contentScript) {
   if (lastDownloadBody?.format !== 'mp3') {
     throw new Error(`Search flow failed: expected MP3 start body, got ${JSON.stringify(lastDownloadBody)}`)
   }
+
+  await page.locator('#ytg-dismiss').click()
+  await page.waitForFunction(() => !document.querySelector('#ytg-panel'), { timeout: 8000 })
+  await waitForText(page, '#search-card .ytg-lockup-btn', 'Download')
+  await waitForText(page, '#search-card-copy .ytg-lockup-btn', 'Download')
 }
 
 async function run() {

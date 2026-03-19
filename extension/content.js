@@ -21,6 +21,13 @@ const state = {
   qualityRequestToken: 0
 }
 
+const BUTTON_ICON_PATHS = Object.freeze({
+  idle: 'M11 3h2v9h3l-4 5-4-5h3V3zm-7 15h16v2H4z',
+  busy: 'M11 3h2v9h3l-4 5-4-5h3V3zm-7 15h16v2H4z',
+  done: 'M9.55 18.2 4.8 13.45l1.4-1.4 3.35 3.3 8.25-8.25 1.4 1.4-9.65 9.7z',
+  error: 'M12 2 1 21h22L12 2zm1 14h-2v2h2v-2zm0-6h-2v5h2v-5z'
+})
+
 const selectors = [
   'h1.ytd-video-primary-info-renderer yt-formatted-string',
   'h1.style-scope.ytd-watch-metadata yt-formatted-string',
@@ -54,6 +61,12 @@ function normalizeVideoURL(href) {
   }
 }
 
+function getJobForVideoUrl(videoUrl) {
+  const normalizedUrl = normalizeVideoURL(videoUrl)
+  if (!normalizedUrl || !state.activeJobState) return null
+  return state.activeJobState.videoUrl === normalizedUrl ? state.activeJobState : null
+}
+
 function getVideoTitle() {
   for (const selector of selectors) {
     const node = document.querySelector(selector)
@@ -85,10 +98,8 @@ function sendBackground(action, payload = {}) {
 }
 
 function getRelevantActiveJob() {
-  if (!state.activeJobState || !state.downloadContext) return null
-  const currentVideoUrl = normalizeVideoURL(state.downloadContext.url || location.href)
-  if (!currentVideoUrl) return null
-  return state.activeJobState.videoUrl === currentVideoUrl ? state.activeJobState : null
+  if (!state.downloadContext) return null
+  return getJobForVideoUrl(state.downloadContext.url || location.href)
 }
 
 function getServerState() {
@@ -231,15 +242,10 @@ function injectButton(target) {
   const btn = document.createElement('button')
   btn.id = 'ytg-trigger'
   btn.type = 'button'
-  btn.innerHTML = `
-    <span class="ytg-trigger-icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24"><path d="M11 3h2v9h3l-4 5-4-5h3V3zm-7 15h16v2H4z"/></svg>
-    </span>
-    <span>${escapeHtml(t('downloadButton'))}</span>
-  `
   btn.dataset.url = location.href
   btn.dataset.title = getVideoTitle()
   btn.addEventListener('click', onTriggerClick)
+  renderInjectedButton(btn)
 
   wrap.appendChild(btn)
 
@@ -248,14 +254,18 @@ function injectButton(target) {
     target.node.style.display = 'none'
     wrap.classList.add('ytg-native-slot')
     target.node.parentElement?.insertBefore(wrap, target.node)
+    renderInjectedButtons()
     return
   }
 
   target.node.prepend(wrap)
+  renderInjectedButtons()
 }
 
 function injectCardButtons(roots) {
-  return injectLockupButtons(roots) + injectLegacyCardButtons(roots)
+  const injected = injectLockupButtons(roots) + injectLegacyCardButtons(roots)
+  renderInjectedButtons()
+  return injected
 }
 
 function injectLockupButtons(roots) {
@@ -337,14 +347,9 @@ function createLockupButton(url, title) {
   const btn = document.createElement('button')
   btn.type = 'button'
   btn.className = 'ytg-lockup-btn'
-  btn.innerHTML = `
-    <span class="ytg-lockup-icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24"><path d="M11 3h2v9h3l-4 5-4-5h3V3zm-7 15h16v2H4z"/></svg>
-    </span>
-    <span class="ytg-lockup-label">${escapeHtml(t('downloadButtonCompact'))}</span>
-  `
   btn.dataset.url = url
   btn.dataset.title = title
+  renderInjectedButton(btn)
 
   const suppressEvent = evt => {
     if (evt.cancelable) evt.preventDefault()
@@ -373,6 +378,82 @@ function createLockupButton(url, title) {
   })
 
   return btn
+}
+
+function getInjectedButtonKind(button) {
+  return button.classList.contains('ytg-lockup-btn') ? 'compact' : 'watch'
+}
+
+function getInjectedButtonVideoUrl(button) {
+  return normalizeVideoURL(button?.dataset?.url || (button?.id === 'ytg-trigger' ? location.href : ''))
+}
+
+function getInjectedButtonVisualState(button) {
+  const job = getJobForVideoUrl(getInjectedButtonVideoUrl(button))
+  if (!job) {
+    return {
+      stateName: 'idle',
+      requestedFormat: '',
+      labelKey: getInjectedButtonKind(button) === 'compact' ? 'downloadButtonCompact' : 'downloadButton'
+    }
+  }
+
+  const requestedFormat = job.requestedFormat === 'mp3' ? 'mp3' : 'mp4'
+  let stateName = 'busy'
+  if (job.status === 'error') {
+    stateName = 'error'
+  } else if (job.status === 'ready' && job.downloadState === 'accepted') {
+    stateName = 'done'
+  }
+
+  const compactSuffix = getInjectedButtonKind(button) === 'compact' ? 'Compact' : ''
+  const formatSuffix = requestedFormat === 'mp3' ? 'Mp3' : 'Mp4'
+  return {
+    stateName,
+    requestedFormat,
+    labelKey: `downloadButton${stateName[0].toUpperCase()}${stateName.slice(1)}${formatSuffix}${compactSuffix}`
+  }
+}
+
+function renderInjectedButton(button) {
+  if (!(button instanceof HTMLButtonElement)) return
+
+  const kind = getInjectedButtonKind(button)
+  const visual = getInjectedButtonVisualState(button)
+  const label = t(visual.labelKey) || (kind === 'compact' ? t('downloadButtonCompact') : t('downloadButton'))
+  const iconClass = kind === 'compact' ? 'ytg-lockup-icon' : 'ytg-trigger-icon'
+  const labelClass = kind === 'compact' ? 'ytg-lockup-label' : 'ytg-trigger-label'
+  const iconPath = BUTTON_ICON_PATHS[visual.stateName] || BUTTON_ICON_PATHS.idle
+
+  button.classList.toggle('is-busy', visual.stateName === 'busy')
+  button.classList.toggle('is-done', visual.stateName === 'done')
+  button.classList.toggle('is-error', visual.stateName === 'error')
+  button.dataset.ytgState = visual.stateName
+  button.dataset.ytgRequestedFormat = visual.requestedFormat
+  button.setAttribute('aria-busy', visual.stateName === 'busy' ? 'true' : 'false')
+  button.setAttribute('aria-label', label)
+  button.title = label
+  button.innerHTML = `
+    <span class="${iconClass}" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="${iconPath}"/></svg>
+    </span>
+    <span class="${labelClass}">${escapeHtml(label)}</span>
+  `
+}
+
+function renderInjectedButtons() {
+  const trigger = document.getElementById('ytg-trigger')
+  if (trigger instanceof HTMLButtonElement) {
+    trigger.dataset.url = location.href
+    trigger.dataset.title = getVideoTitle()
+    renderInjectedButton(trigger)
+  }
+
+  document.querySelectorAll('.ytg-lockup-btn').forEach(button => {
+    if (!(button instanceof HTMLButtonElement)) return
+    refreshCardButtonContext(button)
+    renderInjectedButton(button)
+  })
 }
 
 function refreshCardButtonContext(btn) {
@@ -818,6 +899,7 @@ function buildSummaryHTML(job, includeSavedHint) {
 }
 
 function renderPanel() {
+  renderInjectedButtons()
   if (!state.panel) return
 
   const nextServerState = getServerState()
@@ -998,5 +1080,21 @@ chrome.runtime.onMessage.addListener(message => {
   }
 })
 
+async function hydrateInitialContentState() {
+  const [serverResponse, jobResponse] = await Promise.all([
+    sendBackground('getServerState'),
+    sendBackground('getActiveJobState')
+  ])
+
+  if (serverResponse.ok) {
+    state.serverState = serverResponse.serverState
+  }
+  if (jobResponse.ok) {
+    state.activeJobState = jobResponse.activeJobState || null
+  }
+  renderInjectedButtons()
+}
+
 scheduleInject()
 watchPage()
+void hydrateInitialContentState()
